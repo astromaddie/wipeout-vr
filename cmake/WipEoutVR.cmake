@@ -136,3 +136,41 @@ target_compile_options(test_vr_view PRIVATE
 	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
 )
 add_test(NAME vr_view COMMAND test_vr_view)
+
+
+# Host acceptance harness (Linux; needs a GL context, so it runs under Xvfb with
+# Mesa llvmpipe). It links the real renderer (src/render_gl.c, WIPEOUT_VR) and
+# drives the record, replay, HUD alpha and dump paths with a synthetic scene and
+# a fake view provider. Output goes to <build>/vr-harness/.
+if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
+	add_executable(vr_render_harness
+		tests/vr/vr_render_harness.c
+		src/render_gl.c
+		src/types.c
+		src/mem.c
+		src/utils.c
+	)
+	set_property(TARGET vr_render_harness PROPERTY C_STANDARD 11)
+	target_compile_definitions(vr_render_harness PRIVATE WIPEOUT_VR=1 RENDERER_GL)
+	target_include_directories(vr_render_harness PRIVATE src src/vr third_party/sfvr/tests ${GLEW_INCLUDE_DIRS})
+	target_include_directories(vr_render_harness SYSTEM PRIVATE src/libs)
+	target_link_libraries(vr_render_harness PRIVATE wipeout_vr_core GLEW::GLEW SDL2::Main m)
+	if(USE_GLVND AND TARGET OpenGL::OpenGL)
+		target_link_libraries(vr_render_harness PRIVATE OpenGL::OpenGL)
+	else()
+		target_link_libraries(vr_render_harness PRIVATE OpenGL::GL)
+	endif()
+	target_compile_options(vr_render_harness PRIVATE -Wall -Wextra -fsigned-char)
+
+	find_program(WIPEOUT_VR_XVFB_RUN xvfb-run)
+	if(WIPEOUT_VR_XVFB_RUN)
+		add_test(NAME vr_render_harness COMMAND
+			${WIPEOUT_VR_XVFB_RUN} -a -s "-screen 0 1600x1200x24"
+			$<TARGET_FILE:vr_render_harness> ${CMAKE_BINARY_DIR}/vr-harness)
+		set_tests_properties(vr_render_harness PROPERTIES
+			ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;SDL_VIDEODRIVER=x11"
+			TIMEOUT 300)
+	else()
+		message(STATUS "vr_render_harness is built but not registered with CTest: xvfb-run was not found")
+	endif()
+endif()

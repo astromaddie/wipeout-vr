@@ -53,4 +53,10 @@ RUN set -eux; \
     ldconfig; \
     rm -rf /tmp/*
 
+# The host render harness (tests/vr/vr_render_harness.c) needs a GL context: a virtual X server
+# and Mesa's software rasteriser (llvmpipe).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb xauth libgl1-mesa-dri mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
