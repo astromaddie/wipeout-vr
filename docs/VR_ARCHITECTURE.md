@@ -43,41 +43,60 @@ This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if
    - **Mono frame** (intro, title, menus, highscores; and race while `vr.force_mono` is set): the whole list is replayed once with the game camera and native projection into the panel swapchain, shown on a world-locked quad.
 5. `vr_frame_end()`: `xrEndFrame` with the projection layer (stereo only), plus the HUD quad or the panel quad, plus the fade quad when one is active.
 
-**Current state (phase 1).** Steps 1, 2 and 5 exist. `platform_sdl.c` calls `vr_frame_begin()` after pumping SDL events, `system_update()` takes `dt` from `vr_frame_dt()` (the change in `predictedDisplayTime`, then the game's 0.1 s clamp) and `platform_end_frame()` calls `vr_present_flat_frame()`. That copies the window's back buffer into a quad swapchain and submits it as a world-locked quad layer, `vr.panel_width` wide, `vr.panel_distance` metres ahead of the head (levelled, heading only), re-anchored on `XrEventDataReferenceSpaceChangePending` and on every focus gain. The game still renders flat into its own backbuffer. Vsync is off, since `xrWaitFrame` paces the loop. While `shouldRender` is false or the app lacks focus, `dt` is 0 and SDL audio is paused, but the loop keeps waiting, beginning and ending frames. Steps 3 and 4 (command list, per-eye replay) are the next milestone; the seams are `vr_eye_acquire()`/`vr_eye_release()`/`vr_submit_projection()` in `src/vr/vr.h`.
+**Current state (phase 2, host-verified only).** All five steps exist.
+
+- `platform_sdl.c` calls `vr_frame_begin()` after pumping SDL events; `system_update()` takes `dt` from `vr_frame_dt()` (the change in `predictedDisplayTime`, then the game's 0.1 s clamp). `render_frame_prepare()` starts recording and `render_frame_end()` replays; `platform_end_frame()` calls `vr_present_frame()`, which ends the XR frame with the layers the replay produced.
+- The renderer (`src/vr/vr_render_gl.inc`, compiled inside `render_gl.c`) asks a provider for the frame's views and for images to draw into. `vr.c` is the provider for the runtime; the host harness has a fake one.
+- Layers, bottom to top (`vr_compose.c`): the projection layer (stereo), the HUD quad (stereo), the world-locked panel quad (mono), a black fade quad in VIEW space while a mono/stereo switch fades.
+- While `shouldRender` is false or the app lacks focus, `dt` is 0 and SDL audio is paused, and the loop keeps waiting, beginning and ending frames. A standby frame records but replays nothing (unless `force_render`). Vsync is off, since `xrWaitFrame` paces the loop.
+- Which frames are stereo: `race.c` calls `render_vr_race_view(!g.is_attract_mode)` before the race camera's `render_set_view`, so every race frame is stereo (including the intro fly-over and the pause menu, whose 2D goes on the HUD quad) except the attract mode's cutting cameras, and any frame while `vr.force_mono` is set, or while the head cannot be tracked. Everything else (intro video, title, menus, the main menu's 3D models, highscores) is mono.
+- A mode switch (including the first frame) starts the fade and a recentre. A recentre is also requested by `vr_take_recentre_request()` (the input worker's contract; a weak stub in `vr.c` stands in until `vr_input.c` merges), by focus gain and by `XrEventDataReferenceSpaceChangePending`. It is applied at the start of the next stereo frame (the mono panel is re-placed at the next mono frame).
+- Not built: `hud_mode` far and leash (near is used, with a log line), `hud_visible`, a desktop mirror of the frame (the window shows nothing), GPU timing.
 
 Every per-frame state change (pickup colour cycling, particles, `cycle_time`) happens inside `game_update`, so the per-eye replay cannot advance state twice.
 
 ## 4. Stereo renderer
 
-- **Command list** (`render_gl.c`, behind `WIPEOUT_VR`): the commands are
+- **Command list** (`vr_cmd.[ch]`, pure data; the hooks are one fenced `if (vrr.recording)` per function in `render_gl.c`): the commands are
   - `VIEW(pos, angles)` and `VIEW_2D`;
-  - `MODEL_MAT`, `DEPTH_WRITE`, `DEPTH_TEST`, `DEPTH_OFFSET`, `BLEND`, `CULL`, `SCREEN_POS`;
-  - `TRIS(first, count)`, an index range into the frame's triangle arena, with atlas UVs already applied;
+  - `MODEL_MAT` (flagged when it is the sky), `DEPTH_WRITE`, `DEPTH_TEST`, `DEPTH_OFFSET`, `BLEND`, `CULL`, `SCREEN_POS`;
+  - `TRIS(first, count)`, an index range into the frame's triangle arena, with atlas UVs already applied; consecutive pushes are one range;
   - `SPRITE(pos, size, color, tex)`.
 
-  Texture creation and upload stay immediate, because they are resources rather than draws. Record mode reproduces the flat path's state semantics, including `render_set_view` resetting depth state and the model matrix.
-- **Eye view**: `eye_view = inverse(anchor · head_from_local · eye_from_head)`. The runtime gives the eye pose in metres; scale its translation by `vr.world_scale` (game units per metre). IPD comes only from the runtime eye poses.
-- **Eye projection**: the runtime's asymmetric FOV in the game's GL clip convention, with near 16 and far 64000.
-- **Anchor**: the game camera's position, yaw and pitch, with roll 0, so pitch follows the track. Roll follows `save.internal_roll` only when `vr.follow_vehicle_rotation` is on. `vr.horizon_lock` also drops pitch.
-- **Recentre**: transfers head yaw into a VR yaw offset at a stereo frame boundary. It is triggered by L View held 1 s, `XrEventDataReferenceSpaceChangePending`, focus gain, and every mono↔stereo switch.
-- **Fade**: a black compositor quad, 0.25 s hold then 0.35 s fade, on every mono↔stereo switch.
+  Texture creation and upload stay immediate, because they are resources rather than draws. Recording reproduces the flat path's state semantics: `VIEW` resets depth test and write and the model matrix, `render_set_blend_mode` ignores a repeat, `view_mat` and `sprite_mat` are kept for `render_transform`, and the blend and cull state persist across frames (the list records the state a frame started in). Each replay pass sets its whole GL state explicitly, with `GL_FRAMEBUFFER_SRGB` off (the game's colours are gamma-encoded already), so no pass depends on another. The arena goes to the GPU once per frame; sprites are expanded per pass, into a region of their own per pass.
+- **Segments**: a command recorded after `VIEW_2D` is in the HUD segment. Each pass runs every state command and draws only its segment: eyes draw the 3D segment, the HUD passes the 2D one, a mono pass both.
+- **Coordinate conventions** (derived from `render_set_view` and `mat4_set_*` in `src/types.c`, restated and tested in `vr_math.c`):
+  - OpenXR: right-handed, +X right, +Y up, -Z forward, metres.
+  - The game's world: +X right, **+Y down**, +Z forward at yaw 0, game units. Right-handed (the usual camera triple).
+  - `render_set_view(pos, angles)` builds `R * T(-pos)` with `R = mat4_set_roll_pitch_yaw(pitch, -yaw + M_PI, roll + M_PI)`. The two `M_PI` offsets are what turn the Y-down world into GL view space: at angles 0, `R = diag(1, -1, -1)`.
+  - GL view space (+X right, +Y up, -Z forward) has the same axes as OpenXR, so an OpenXR pose is already in the view space of the game camera. No axis swap is needed.
+  - The game's `sprite_mat` is `R^T * diag(-1, -1, 1)` at roll 0.
+- **Eye view**: with `A` the anchor's view rotation (from `vr_anchor_angles`), `Rrc` the rotation by minus the recentre yaw about +Y and `M` the eye's orientation, the eye's view rotation is `(Rrc * M)^T * A`. Its position is the game camera's plus `A^T * world_scale * (head_translation * Rrc * (head - origin) + Rrc * (eye - head))`: the head centre (midway between the eyes) is scaled by `head_translation`, the eye's offset from it never is, and the IPD comes only from the runtime's eye poses. With an identity head at the recentre origin, the centre eye's view equals the game's own `view_mat` exactly (tested).
+- **Eye projection**: the runtime's asymmetric fov in the game's GL clip convention (`z` in -1..1), near 16, far 64000 (`NEAR_PLANE`, `FAR_PLANE`). The `camera_pos` uniform of the distance fade is the eye's position.
+- **Anchor**: the game camera's position, yaw and pitch, with roll 0, so pitch follows the track. Roll follows the camera (`save.internal_roll`) only when `vr.follow_vehicle_rotation` is on. `vr.horizon_lock` also drops pitch. The eye images are submitted with the poses and fovs they were rendered with.
+- **Recentre**: records the head's yaw and position (`vr_recentre_t`); the head then sits at the game camera, facing where the camera faces, so the yaw is transferred into the VR offset. It is triggered by the input layer's request (L View held 1 s, the input worker), `XrEventDataReferenceSpaceChangePending`, focus gain, and every mono/stereo switch, and applied at the start of a stereo frame. `diag_yaw` turns the head after the recentre, so it stays visible.
+- **HUD** (`hud_mode near`): a quad layer `hud_distance` metres (default 2.0) along the head's forward, following its yaw and pitch and never its roll (`vr_hud_pose`), 40 degrees wide at `hud_scale` 100% (the width scales with the percentage), 16:9, in a 1920x1080 texture (the 2D layout size, which is also `render_size()` in VR; `ui_scale` is 3). The 2D segment is replayed twice, over black and over white, and a resolve pass solves for the alpha (`a = 1 - mean(over_white - over_black)`, colour = over_black / a, straight alpha, `UNPREMULTIPLIED` layer flag). The game's own framebuffer alpha is never read.
+- **Target reticle**: `render_transform` in a stereo frame projects through the head-centre camera with its roll removed onto the HUD quad's frustum, so the reticle sits over its target as seen from the head. Parallax between the two eyes at the quad's 2 m is not corrected.
+- **Mono panel**: the 1920x1080 texture, the game's camera and native projection, one pass, on a quad `panel_width` metres wide, `panel_distance` ahead of the head (levelled, heading only), world-locked, re-placed on recentre requests.
+- **Fade**: a 4x4 black swapchain image at the fade's alpha on a quad in VIEW space 0.35 m ahead, 2.6 m wide, 0.25 s at alpha 1 then 0.35 s linear to 0, on every mono/stereo switch and the first frame.
+- **Diagnostics** (section 7): `diag_yaw`, `dump_frame`, `timing`, `force_render`.
 
 ## 5. Draw inventory (camera-relative and screen-space draws)
 
 | File:function | What it draws | Flat rule | VR rule | Verified by |
 | --- | --- | --- | --- | --- |
-| `scene.c:scene_draw` (sky) | Sky object translated to `camera->position + sky_offset`, depth write off | Follows the camera | Tag as `SKY`. At replay, re-translate the model matrix to each eye's position | not started |
-| `scene.c:scene_draw` (objects) | Cull: `dot(cam_pos - origin, cam_fwd) < radius` and distance < 64000 | Forward half-space cull from the game camera | Distance-only cull in VR (`vr_wide_cull`), so a turned head sees scenery | not started |
-| `track.c:track_draw` | Sections, culled by the camera-forward plane | Forward half-space cull | Distance-only cull in VR | not started |
-| `render_gl.c:render_push_sprite` | Billboards expanded with `sprite_mat` from the game camera angles | Faces the game camera | Record as `SPRITE`; expand per eye, facing that eye | not started |
-| `render_gl.c` vertex shader `fade` | Alpha fade by distance from `camera_pos` | Game camera | Per-eye position | not started |
-| `race.c` `render_set_screen_position(g.camera.shake)` | Screen-space shake offset (`screen` uniform) | Clip-space offset | Ignored in VR (`camera_shake` off). Optional `impact` haptic instead | not started |
-| `ship.c` / `particle.c` depth offset −32 | Shadows and particles | Polygon offset | Unchanged, per eye | not started |
-| `hud.c:hud_draw_target_icon` | Target reticle from `render_transform` (mono view and projection) | Screen projection | Project through the head-centre camera onto the HUD quad's frustum, so the reticle sits over its target. Mark headset-unverified | not started |
-| `hud.c`, `ui.c`, `menu.c` 2D | All 2D text and quads, after `render_set_view_2d` | Ortho over the backbuffer | HUD swapchain on a quad. Alpha derived from renders over black and over white (lesson 6) | not started |
-| `main_menu.c` 3D ship and logo models | `render_set_view` at the origin, plus a screen offset | Mono 3D | Mono frame on the world-locked panel | not started |
-| `intro.c` MPEG video | 2D texture | Fullscreen | Mono panel (cinema quad later) | not started |
-| `render_gl.c` post effects (CRT) and `RENDER_RES_240P/480P` | Backbuffer post-process | Fullscreen | Disabled in VR; eyes render at the runtime's recommended size × `resolution_scale` | not started |
+| `scene.c:scene_draw` (sky) | Sky object translated to `camera->position + sky_offset`, depth write off | Follows the camera | `render_vr_sky(true)` around the draw tags its `MODEL_MAT`; replay re-translates it from the game camera to each eye | Host harness "sky at infinity": the +x/+z sky edge stays within 2 px when the head moves 1 m (without the re-translate it moves 9 px). `scene.c` itself has not run (no game data) |
+| `scene.c:scene_draw` (objects) | Cull: `dot(cam_pos - origin, cam_fwd) < radius` and distance < 64000 | Forward half-space cull from the game camera | `render_vr_wide_cull()` in a stereo frame skips the half-space test: distance only | Host harness at head yaw 180: the marker behind the camera is drawn and centred in both eyes (it fails with the hook forced off). The harness mirrors the cull logic through the same hook; `scene.c` has not run |
+| `track.c:track_draw` | Sections, culled by the camera-forward plane | Forward half-space cull | Same hook: distance only, `FAR + radius` | Hook shared with the row above; the harness ground strip is not culled. `track.c` has not run; the diff is reviewable and flat-unchanged |
+| `render_gl.c:render_push_sprite` | Billboards expanded with `sprite_mat` from the game camera angles | Faces the game camera | Recorded as `SPRITE`; expanded per pass with `R_eye^T * diag(-1, -1, 1)`, facing that eye | Host harness "sprite facing": head turned 30 degrees, both eyes, aspect 0.979 (a game-camera billboard would be 0.87). The mono replay of the same sprite equals the flat renderer pixel for pixel. `vr_view` pins the matrix against `sprite_mat` |
+| `render_gl.c` vertex shader `fade` | Alpha fade by distance from `camera_pos` | Game camera | `camera_pos` is the eye's position, set at each `VIEW` | Host harness: a cube 55400 units away, head leaning 3 m forward, blue channel within 0.2 levels of the analytic smoothstep for both eyes (it fails with the game camera's position) |
+| `race.c` `render_set_screen_position(g.camera.shake)` | Screen-space shake offset (`screen` uniform) | Clip-space offset | `SCREEN_POS` is ignored in eye and HUD passes (kept in the mono panel, where the main menu uses it to place models). The `camera_shake` key does nothing yet. The optional `impact` haptic is the input worker's | Host harness: every stereo frame sets a (0.3, 0.3) shake and the markers still land on their analytic pixels; the mono frame with the same shake equals the flat renderer |
+| `ship.c` / `particle.c` depth offset −32 | Shadows and particles | Polygon offset | Unchanged, per eye (`DEPTH_OFFSET` replays as `glPolygonOffset`) | The harness sprite is drawn with it, additive and without depth write, equal to flat in mono. Shadows have not drawn (no data) |
+| `hud.c:hud_draw_target_icon` | Target reticle from `render_transform` (mono view and projection) | Screen projection | In a stereo frame `render_transform` projects through the head-centre camera (roll removed) onto the HUD quad's frustum | Host harness: straight ahead lands at NDC (0, 0), 10 degrees right at 0.4845 (`tan 10 / tan 20`), behind the head z >= 1; `vr_view` pins the HUD camera. **Headset-unverified**: the reticle is a 2 m overlay while its target is far, so the eyes see parallax between them |
+| `hud.c`, `ui.c`, `menu.c` 2D | All 2D text and quads, after `render_set_view_2d` | Ortho over the backbuffer | HUD swapchain on a quad. Alpha derived from renders over black and over white (lesson 6) | Host harness: authored alpha 128, 255 and 64 come back as 128, 255 and 64 (colour within 10), 88% of the HUD transparent where nothing was drawn (it fails with alpha forced to 1). The real `hud.c`, `ui.c` and `menu.c` have not run; text legibility at 40 degrees is unjudged |
+| `main_menu.c` 3D ship and logo models | `render_set_view` at the origin, plus a screen offset | Mono 3D | Mono frame on the world-locked panel (no `render_vr_race_view`) | Host harness: a mono frame with `render_set_screen_position`, depth offsets and additive sprites is 0 of 518400 pixels different from the flat renderer. `main_menu.c` has not run |
+| `intro.c` MPEG video | 2D texture | Fullscreen | Mono panel (cinema quad later). `render_texture_replace_pixels` stays immediate | The mono path as above. The video has not played |
+| `render_gl.c` post effects (CRT) and `RENDER_RES_240P/480P` | Backbuffer post-process | Fullscreen | Ignored while the renderer is attached; `render_size()` is the 2D layout size. The eyes are the runtime's recommended size times `resolution_scale` (phase 1) | Host harness: with CRT and 240p requested, `render_size()` stays 960x540 and the mono replay still equals the flat renderer without them |
 
 ## 6. Controls (Frame profile; game codes via `input_set_button_state`)
 
@@ -109,13 +128,18 @@ Port keys (not in the sfvr registry):
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `world_scale` | 128.0 (**placeholder**, 16 to 1024) | Game units per metre. The chase camera sits 1024 units behind the ship, which should be about 8 m. Derive it from the ship hull length and confirm at first wear |
-| `force_mono` | false | Keep race frames on the mono panel, with no stereo (next milestone) |
+| `force_mono` | false | Keep race frames on the mono panel, with no stereo |
 | `panel_distance` | 2.0 m (0.8 to 20) | The flat panel's distance |
 | `panel_width` | 2.4 m (0.5 to 10) | The flat panel's width; its height follows the window's aspect |
 
 The doc's other keys are sfvr standard keys with sfvr's defaults: `follow_vehicle_rotation` (off), `horizon_lock` (off), `hud_mode` (`near`), `hud_distance` (2.0 m), `hud_scale` (100), `resolution_scale` (1.0), `refresh_rate` (90), `camera_shake` (off), and the rest of the standard set. The settings page (phase 4) is not built.
 
-Diagnostics: `force_render`, `diag_yaw`, `dump_frame`, `probe_seconds`, `timing` are registry keys. `probe_seconds` and `force_render` (synthetic head at 1.6 m, layers submitted in standby) are implemented. `diag_yaw`, `dump_frame` and `timing` are read but do nothing yet, and the `[vr-perf]` line is not emitted yet. Log prefixes are `[vr]` for state changes and `[vr-perf]` every 10 s.
+Diagnostics: `force_render`, `diag_yaw`, `dump_frame`, `probe_seconds`, `timing` are registry keys, all implemented. Log prefixes are `[vr]` for state changes and `[vr-perf]` every 10 s.
+
+- `force_render`: submit layers in standby, with a synthetic head at 1.6 m (`vr_xr.c`), so unattended runs draw.
+- `diag_yaw` (degrees, positive turns left): turns the head about its centre after the recentre, so a synthetic head yaw is visible. The eyes are submitted with the turned poses.
+- `dump_frame=N`: the N-th replayed frame (counting from 1) writes `vr-eye0.bmp`, `vr-eye1.bmp` (24-bit) and `vr-hud.bmp` (32-bit, straight alpha) for a stereo frame, `vr-panel.bmp` for a mono one, and `vr-state.txt` (mode, recentre, head and eye poses, game-space eye positions, HUD pose, fade, counts, timings) into `<data>/vr-dumps/`. The pixels are copied into a PBO behind a fence and written by a later frame, so the frame never waits; nothing reads back in a normal frame.
+- `timing`: a `[vr-perf]` line every 10 s through `sfvr_perf`: `fps`, `missed` (display time advanced by more than 1.5 periods), `cpu` and the stages `record`, `replay` (both eyes) and `hud`, `eye=` left/right, `gpu=n/a`. All are CPU submission times. `record` is measured with a clock read per recorded call, so it only costs anything under `timing`.
 
 **Probe.** `vr.probe_seconds = N` (or `WIPEOUT_VR_PROBE_SECONDS=N`) makes the VR build clear the left eye red and the right eye blue for N seconds after the session is running, before `system_init()` loads anything. It logs the swapchain format, eye size and graphics binding with the `[vr]` prefix. It waits up to 20 s for the session to start, and says so if standby (`shouldRender` false) is all it gets.
 
@@ -130,16 +154,16 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 | OpenXR host (instance, session, spaces, swapchains, frame loop, extensions) | 0 | host | `src/vr/vr_xr.c`. Fake-runtime tests only; never run against SteamVR |
 | GL binding from SDL's x11 window | 0 | not run | `src/vr/vr_gl.c`. Built on Linux arm64; the F-Zero X probe ran the same calls on the Frame |
 | OpenXR probe (colour per eye) | 0 | not run | Implemented (`vr.probe_seconds`). **The phase-0 gate is still open: it has not run on the Frame** |
-| Settings (`vr.toml`, env overrides) | 1 | host | Unit-tested |
+| Settings (`vr.toml`, env overrides) | 1 | host | Unit-tested; `diag_yaw`, `dump_frame` and `timing` now do something |
 | Linux ARM64 build (Docker), ABI check, tests | 1 | host | Section 9 |
-| Flat game on a world-locked panel | 1 | not run | Implemented; no game data and no headset, so it has never drawn a frame |
+| Flat game on a world-locked panel | 1 | host | Now the mono path: the panel is rendered into directly (no back-buffer copy). Equal to the flat renderer in the harness; never drawn a real frame, no game data and no headset |
 | Device scripts (`LAUNCH-STEAM-FRAME.sh`, `deploy.sh`) | 1 | not run | Syntax-checked and dry-run only; the Frame was offline |
 | Devkit title, data dir on the Frame | 1 | not started | |
-| Command list and per-eye replay | 2 | not started | |
-| HUD quad, mono panel, fades | 2 | not started | |
-| Draw inventory rows | 2 | not started | See section 5 |
+| Command list and per-eye replay | 2 | host | Recorded and replayed in `render_gl.c` (`vr_render_gl.inc`). Host harness: 324 pixel and state checks pass under Xvfb + llvmpipe; the mono replay equals the flat renderer. Never run against the Frame's Zink |
+| HUD quad, mono panel, fades | 2 | host | HUD alpha solve, quad layer, panel and fade quads built (`vr_compose`, unit-tested) and rendered in the harness. Never submitted to a runtime; fade and HUD placement unworn |
+| Draw inventory rows | 2 | host | All rows implemented and verified as section 5 says. The game's own `scene.c`, `track.c`, `hud.c`, `main_menu.c` have not run: no game data |
 | Actions and system layer | 2 | not started | |
-| Eye dumps at 0, 90 and 180° yaw | 2 | not started | |
+| Eye dumps at 0, 90 and 180° yaw | 2 | host | `build/vr-harness/yaw-{000,090-right,180}/`: the product's own BMP dumps (`dump_frame`), plus PNG copies. Synthetic scene, not the game |
 | First wear | 3 | not started | Needs game data on the device |
 
 ## 9. Build, test and deploy
@@ -152,7 +176,13 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 
 On macOS the VR build configures, compiles, links and passes its unit tests, but `vr_init()` fails there (no GLX), so it runs flat.
 
-**Unit tests (CTest).** The six sfvr tests plus its C++ header check, and `vr_xr` (a fake runtime behind the `vr_xr_api_t` function table: extension negotiation, session creation, the state machine from IDLE to FOCUSED, standby keeping the loop alive, stop and restart, exit, reference-space change, dt from display time, refresh-rate choice, failures, destroy order), `vr_settings`, `vr_math` (panel placement), `vr_clock` and `vr_paths`.
+**Unit tests (CTest).** The six sfvr tests plus its C++ header check, and `vr_xr` (a fake runtime behind the `vr_xr_api_t` function table: extension negotiation, session creation, the state machine from IDLE to FOCUSED, standby keeping the loop alive, stop and restart, exit, reference-space change, dt from display time, refresh-rate choice, failures, destroy order), `vr_settings`, `vr_math` (panel placement), `vr_clock` and `vr_paths`, and the phase-2 ones:
+
+- `vr_view`: the eye and HUD maths against the game's own matrices (`src/types.c` is linked as the oracle). A centred identity head equals `render_set_view`'s matrix (default, with `follow_vehicle_rotation`, with `horizon_lock`); head yaw to the right looks along the game camera's right; each eye is half the IPD along the camera's right, scaled by `world_scale`; `head_translation` scales the head and not the eyes; recentre absorbs yaw; asymmetric fov hits the clip planes; the disparity sign; the HUD pose follows yaw and pitch and never roll; `diag_yaw`.
+- `vr_stage`: the command list (order, coalescing, growth), the fade curve, mode switches, recentre applied once, the panel placed then held, and the `[vr-perf]` line.
+- `vr_compose`: the layers a frame submits (projection with the renderer's poses, HUD flags, mono panel, fade in VIEW space, order, absent layers).
+
+**Host render harness** (`tests/vr/vr_render_harness.c`, CTest `vr_render_harness`, Linux only). It links the real renderer (`render_gl.c` with `WIPEOUT_VR`, the command list, the replay, the HUD alpha solve, the dumps) and drives it with a synthetic scene, a hidden SDL window, and a fake view provider standing in for the runtime. No game data. It needs a GL context: run it under Xvfb with Mesa llvmpipe, which `tools/docker/linux.Dockerfile` installs (`xvfb`, `libgl1-mesa-dri`); CTest registers it through `xvfb-run` when that exists. `vr_render_harness <dir>` writes the dumps under `<dir>` (`build/vr-harness/` for the manual run, `<build>/vr-harness/` under CTest). It asserts the mono replay equals the flat renderer, that recording draws nothing, markers centred per eye at head yaw 0, 90 and 180 against an analytic pixel expectation, the disparity sign and size, sprite facing, the sky at infinity, the fade measured from the eye, HUD alpha, `diag_yaw`, recentre, standby, `force_mono`, `timing` and the dump files. Mutation checks (wide cull off, no sky re-translate, game-camera sprites, shake applied, alpha forced to 1, fade from the game camera) each fail it.
 
 **GL profile decision (2026-10-02): core 4.3 context plus GLSL 330 shaders in the VR build.** The alternative was a compatibility-profile context that keeps the game's GLSL 1.10 shaders.
 
