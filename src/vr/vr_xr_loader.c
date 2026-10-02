@@ -37,4 +37,16 @@ void vr_xr_api_loader(vr_xr_api_t *api) {
 	api->begin_frame = xrBeginFrame;
 	api->end_frame = xrEndFrame;
 	api->locate_views = xrLocateViews;
+	api->string_to_path = xrStringToPath;
+	api->create_action_set = xrCreateActionSet;
+	api->destroy_action_set = xrDestroyActionSet;
+	api->create_action = xrCreateAction;
+	api->suggest_interaction_profile_bindings = xrSuggestInteractionProfileBindings;
+	api->attach_session_action_sets = xrAttachSessionActionSets;
+	api->sync_actions = xrSyncActions;
+	api->get_action_state_boolean = xrGetActionStateBoolean;
+	api->get_action_state_float = xrGetActionStateFloat;
+	api->get_action_state_vector2f = xrGetActionStateVector2f;
+	api->apply_haptic_feedback = xrApplyHapticFeedback;
+	api->stop_haptic_feedback = xrStopHapticFeedback;
 }

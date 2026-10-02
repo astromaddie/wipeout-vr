@@ -6,6 +6,7 @@
 #include "vr.h"
 #include "vr_compose.h"
 #include "vr_gl.h"
+#include "vr_input.h"
 #include "vr_log.h"
 #include "vr_math.h"
 #include "vr_paths.h"
@@ -19,9 +20,6 @@
 #define VR_PROBE_SESSION_WAIT_MS 20000
 #define VR_SHUTDOWN_WAIT_MS 1000
 
-// CONTRACT with the input worker: src/vr/vr_input.h declares this, and the
-// weak stub at the bottom of this file stands in until vr_input.c is merged.
-bool vr_take_recentre_request(void);
 
 static struct {
 	bool enabled;
@@ -29,6 +27,7 @@ static struct {
 	vr_render_settings_t render_settings;
 	vr_xr_t xr;
 	char dump_dir[1100];
+	vr_input_t *input; // the action set; NULL when it could not be made
 
 	// Surfaces besides the eyes: the HUD and the mono panel (ui size) and the fade (tiny)
 	vr_swapchain_t hud;
@@ -198,6 +197,7 @@ bool vr_init(void *sdl_window) {
 	if (vr.xr.color_format != VR_GL_SRGB8_ALPHA8 && vr.xr.color_format != VR_GL_RGBA8) {
 		vr_logf("WARNING: the swapchain format has no alpha channel, so the HUD quad cannot be translucent");
 	}
+	vr.input = vr_input_create(&vr.xr);
 	vr.enabled = true;
 
 	// The stereo renderer records the game's draw calls and replays them (vr_render.h).
@@ -237,6 +237,8 @@ void vr_shutdown(void) {
 		waited += 5;
 	}
 
+	vr_input_destroy(vr.input, &vr.xr);
+	vr.input = NULL;
 	vr_render_detach();
 	vr_xr_swapchain_destroy(&vr.xr, &vr.hud);
 	vr_xr_swapchain_destroy(&vr.xr, &vr.panel);
@@ -268,7 +270,10 @@ bool vr_frame_begin(void) {
 
 	vr.layers_valid = false;
 	vr.want_projection = false;
-	return vr_xr_frame_begin(&vr.xr);
+	bool begun = vr_xr_frame_begin(&vr.xr);
+	// Actions after xrBeginFrame; with no frame, no focus or no session this releases every input
+	vr_input_update(vr.input, &vr.xr, setting("haptics"));
+	return begun;
 }
 
 // Clears the fade swapchain's image to black at `alpha`: the quad the compositor blends over everything
@@ -417,14 +422,4 @@ void vr_probe(void) {
 	}
 
 	vr_logf("probe: done, %u frames, %u with both eyes drawn", frames, rendered);
-}
-
-
-// -----------------------------------------------------------------------------
-// STUB for the input worker's contract. src/vr/vr_input.c defines the real
-// vr_take_recentre_request(); this weak definition only lets the build link
-// until that file is merged, and it never recentres. Delete it with the merge.
-
-__attribute__((weak)) bool vr_take_recentre_request(void) {
-	return false;
 }

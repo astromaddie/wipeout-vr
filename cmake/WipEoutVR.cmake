@@ -61,6 +61,8 @@ add_library(wipeout_vr_core STATIC
 	src/vr/vr_cmd.h
 	src/vr/vr_compose.c
 	src/vr/vr_compose.h
+	src/vr/vr_input.c
+	src/vr/vr_input.h
 	src/vr/vr_log.c
 	src/vr/vr_log.h
 	src/vr/vr_math.c
@@ -79,6 +81,8 @@ add_library(wipeout_vr_core STATIC
 )
 set_property(TARGET wipeout_vr_core PROPERTY C_STANDARD 11)
 target_include_directories(wipeout_vr_core PUBLIC src/vr)
+# vr_input.c uses the game's input and action headers, which have a WIPEOUT_VR fence
+target_compile_definitions(wipeout_vr_core PUBLIC WIPEOUT_VR=1)
 target_compile_options(wipeout_vr_core PRIVATE
 	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
 )
@@ -174,3 +178,14 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
 		message(STATUS "vr_render_harness is built but not registered with CTest: xvfb-run was not found")
 	endif()
 endif()
+# The input tests run the game's real input layer (src/input.c, which needs nothing else)
+foreach(name input input_xr)
+	add_executable(test_vr_${name} tests/vr/test_vr_${name}.c src/input.c)
+	set_property(TARGET test_vr_${name} PROPERTY C_STANDARD 11)
+	target_include_directories(test_vr_${name} PRIVATE third_party/sfvr/tests src)
+	target_link_libraries(test_vr_${name} PRIVATE wipeout_vr_core)
+	target_compile_options(test_vr_${name} PRIVATE
+		$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
+	)
+	add_test(NAME vr_${name} COMMAND test_vr_${name})
+endforeach()

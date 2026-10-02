@@ -306,3 +306,11 @@ const char *input_button_to_name(button_t button) {
 		input_set_button_state(button, state ? 1.0 : 0.0);
 	}
 #endif
+
+#if WIPEOUT_VR
+	uint8_t input_layer_bound_to_action(input_layer_t layer, button_t button) {
+		error_if(layer < 0 || layer >= INPUT_LAYER_MAX, "Invalid input layer %d", layer);
+		error_if(button < 0 || button >= INPUT_BUTTON_MAX, "Invalid input button %d", button);
+		return bindings[layer][button];
+	}
+#endif

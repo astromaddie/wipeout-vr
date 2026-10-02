@@ -17,7 +17,7 @@ This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if
 | GL profile | Core 4.3 context (SDL requests it, forward-compatible), with GLSL 330 variants of the shaders in `src/vr/vr_shaders_gl330.h`. See section 9 |
 | Base | wipeout-rewrite: C11, SDL2 + OpenGL 2.x/GLES2 renderer (`src/render_gl.c`), about 11k lines |
 | Rejected base | `alexbeavs-ps1-ports/wipeout-recomp` (psxrecomp). It emulates the PS1 GPU, which sees only 2D screen-space triangles, and the game culls to its native frustum. Stereo would need PGXP depth reconstruction plus MIPS reverse engineering. Decided with the user on 2026-10-02 |
-| Legal | Upstream has no license and may derive from the 2022 leaked PC source. Keep this repo **private**. Never commit game data |
+| Legal | Personal, experimental use. Upstream has no license and may derive from the 2022 leaked PC source; the user does not mind (2026-10-02). The repo is private. Never commit game data |
 | Game data | User-supplied PSX NTSC data plus the PC menu models, laid out as upstream's README describes, under `$XDG_DATA_HOME/WipEoutVR/wipeout/` (default `~/.local/share`). Saves and `vr.toml` go in `$XDG_DATA_HOME/WipEoutVR/`. The VR build resolves both at runtime and ignores `PATH_ASSETS` and `PATH_USERDATA` |
 
 ## 2. Triage facts (from the upstream source, 2026-10-02)
@@ -98,23 +98,66 @@ Every per-frame state change (pickup colour cycling, particles, `cycle_time`) ha
 | `intro.c` MPEG video | 2D texture | Fullscreen | Mono panel (cinema quad later). `render_texture_replace_pixels` stays immediate | The mono path as above. The video has not played |
 | `render_gl.c` post effects (CRT) and `RENDER_RES_240P/480P` | Backbuffer post-process | Fullscreen | Ignored while the renderer is attached; `render_size()` is the 2D layout size. The eyes are the runtime's recommended size times `resolution_scale` (phase 1) | Host harness: with CRT and 240p requested, `render_size()` stays 960x540 and the mono replay still equals the flat renderer without them |
 
-## 6. Controls (Frame profile; game codes via `input_set_button_state`)
+## 6. Controls (`src/vr/vr_input.{h,c}`)
 
-| Frame input | Game code | Game action |
-| --- | --- | --- |
-| L stick | `INPUT_GAMEPAD_L_STICK_*` (VR default: also bound to steer and pitch) | Steer, pitch; menu navigation |
-| D-pad | `INPUT_GAMEPAD_DPAD_*` | Steer, pitch; menus |
-| A | `INPUT_GAMEPAD_A` | Thrust; menu select |
-| R trigger (dominant) | `INPUT_GAMEPAD_R_TRIGGER`, a VR alias bound to thrust | Thrust (role alias) |
-| X | `INPUT_GAMEPAD_X` | Fire; menu back |
-| Y | `INPUT_GAMEPAD_Y` | Change view |
-| B | `INPUT_GAMEPAD_B` | Menu back |
-| L / R bumper | `INPUT_GAMEPAD_L_SHOULDER` / `R_SHOULDER` | Air brakes |
-| R Menu | `INPUT_GAMEPAD_START` | Pause / start (system layer) |
-| L View, short | `INPUT_GAMEPAD_SELECT` → menu back | System layer |
-| L View, hold 1 s / 3 s | none | Recentre / recentre (no height in a seated racer) |
+OpenXR actions feed the game's own pad layer, so its bindings, prompts and menus stay valid. One action set (`wipeout`) holds 20 actions: 14 booleans (A, B, X, Y, the two bumpers or grips, Menu, View, the two stick clicks, the D-pad), 2 floats (the triggers), 2 vec2 (the sticks) and 2 vibration outputs. Setup order: `xrCreateActionSet`, every `xrCreateAction`, `xrSuggestInteractionProfileBindings` (Frame, Index, Touch), `xrAttachSessionActionSets`, all right after `xrCreateSession` (`vr_input_create`). The Frame profile is suggested **only when `XR_VALVE_frame_controller_interaction` is enabled** (`vr_xr_t.ext_frame_controller`, which is true only when the runtime offered it). A runtime that rejects a profile is logged and skipped.
 
-Fallback profiles: Index and Touch. The final map needs the user's approval (phase 4).
+**Merge.** Each frame, after `xrBeginFrame` (`vr_frame_begin` in `vr.c`), `vr_input_update` calls `xrSyncActions` and reads every action. It then calls `input_set_button_state(INPUT_GAMEPAD_*, value)` **only for codes whose value changed** since the last frame. Sticks and triggers become the game's split-axis codes the way `platform_sdl.c` does it: a trigger is its own code (0..1), and each stick axis is a pair (`LEFT`/`RIGHT`, `UP`/`DOWN`) with at most one non-zero; stick up is `UP`. With no focus, no running session or a sync that is not `XR_SUCCESS` (`XR_SESSION_NOT_FOCUSED`), every non-zero code is written back to 0, the L View press is cancelled without an event, queued haptics are dropped and playing ones are stopped.
+
+**Game codes, by profile.** The same game code on every profile. The columns are the OpenXR component paths that were suggested (all under `/user/hand/`).
+
+| Game code | Game action | Frame (`/interaction_profiles/valve/frame_controller_valve`) | Index (`/interaction_profiles/valve/index_controller`) | Touch (`/interaction_profiles/oculus/touch_controller`) |
+| --- | --- | --- | --- | --- |
+| `L_STICK_*` (`LEFT/RIGHT/UP/DOWN`) | Steer and pitch (VR alias); menu navigation (system layer) | `left/input/thumbstick` | `left/input/thumbstick` | `left/input/thumbstick` |
+| `R_STICK_*` | Unbound by default; free for the controls menu | `right/input/thumbstick` | `right/input/thumbstick` | `right/input/thumbstick` |
+| `DPAD_*` | Steer, pitch (game default); menus | `left/input/dpad_{up,down,left,right}/click` | none | none |
+| `A` | Thrust (game default), menu select | `right/input/a/click` | `right/input/a/click` | `right/input/a/click` |
+| `B` | Menu back | `right/input/b/click` | none | `left/input/x/click` |
+| `X` | Fire (game default), menu back | `right/input/x/click` | `right/input/b/click` | `right/input/b/click` |
+| `Y` | Change view | `right/input/y/click` | `right/input/thumbstick/click` | `right/input/thumbstick/click` |
+| `L_SHOULDER` / `R_SHOULDER` | Air brakes | `left/input/bumper/click` / `right/input/bumper/click` | `left/input/squeeze/value` / `right/input/squeeze/value` | `left/input/squeeze/value` / `right/input/squeeze/value` |
+| `L_TRIGGER` | Unbound by default | `left/input/trigger/value` | `left/input/trigger/value` | `left/input/trigger/value` |
+| `R_TRIGGER` | Thrust (VR alias) | `right/input/trigger/value` | `right/input/trigger/value` | `right/input/trigger/value` |
+| `START` | Pause / start (system layer: R Menu) | `right/input/menu/click` | `left/input/b/click` | `left/input/menu/click` |
+| `SELECT` | Menu back (system layer: L View short press); never bound in the game's own layer | `left/input/view/click` | `left/input/a/click` | `left/input/y/click` |
+| `L_STICK_PRESS` | Unbound by default | `left/input/thumbstick/click` | `left/input/thumbstick/click` | `left/input/thumbstick/click` |
+| `R_STICK_PRESS` | Unbound by default | `right/input/thumbstick/click` | none (the right stick click is `Y`) | none (the right stick click is `Y`) |
+| Haptics | `system`, `impact`, `ui_click` | `left/output/haptic`, `right/output/haptic` | same | same |
+
+Sources of the component paths (all unverified on the device; the Frame was offline):
+
+- **Frame**: `/Users/mads/code/F-Zero X/port/vr/gdx_openxr.cpp` (the `frame_controller_valve` suggestion, about lines 663 to 682) and `/Users/mads/code/HaloCE VR/port/android/host/host_xr.c` (the `frame[]` table, about lines 317 to 351). Both cite the Steamworks "Steam Frame Input" page. They agree on every path used here but one: F-Zero X binds the triggers as `trigger/click`, Halo as `trigger/value`. This port uses `trigger/value`, because thrust is analog and the actions are floats. Stick clicks and the right thumbstick come from Halo's table. The skill's `platform.md` gives only the layout (D-pad left, ABXY right, sticks, triggers, grips, bumpers, Menu, View).
+- **Index** and **Touch** paths: F-Zero X's suggestions (`gdx_openxr.cpp` about lines 684 to 709: thumbsticks, `a/click`, `b/click`, `squeeze/value`, `trigger/value`, the left `a`/`b` or `y`/`menu` stand-ins for View and Menu) plus Halo's Touch table (`left/input/x/click`, `y/click`, `menu/click`) and Index table (`thumbstick/click`). The assignment of those inputs to game codes is this port's own: neither has bumpers, a D-pad, View or a right Menu button, so the grips are the air brakes, a left face button stands in for View, and another for Menu.
+- On the Frame the physical letters are the game's letters (the game prints `A`, `X`, `Y`, `LSHLDR` in its controls menu). Index and Touch cannot match them (right `B` is `X`). The final map still needs the user's approval (phase 4).
+
+**Default aliases (VR build, once, at the end of `game_init`).** The game's own bindings are kept as they are. `vr_input_apply_default_bindings(save.buttons)` adds, in the **user** input layer:
+
+- `L_STICK_LEFT/RIGHT/UP/DOWN` to `A_LEFT/A_RIGHT/A_UP/A_DOWN`;
+- `R_TRIGGER` to `A_THRUST`.
+
+An alias is added only when nothing is bound to its button in the user layer and the action's joystick slot in `save.buttons` still holds the game's default (D-pad direction, or `A`). That is, it is skipped when the user has bound the stick direction or trigger, or has rebound or cleared that action's joystick slot. The aliases sit outside `save.buttons`, which has one joystick slot per action and is written to the save file. So the D-pad and `A` stay in the slot, a flat build reading the same save does not see the aliases, and the controls menu (which shows the slot) shows what the user set; it does not list the aliases. The system layer is untouched, because `L_STICK_*` is already bound there to the menu actions. A binding made later from the controls menu replaces the alias for that button (`input_bind` keeps one action per button per layer). `SELECT` is bound to `A_MENU_BACK` in the system layer unless something is bound there already (`input_layer_bound_to_action`, added behind `WIPEOUT_VR` at the end of `input.c`). Upstream's controls menu does not unbind the old button of a rebound action until restart; that is unchanged.
+
+**System layer** (`vr_pad_update`, L View through `sfvr_view` at the frame's predicted display time):
+
+| Input | Result |
+| --- | --- |
+| R Menu | `INPUT_GAMEPAD_START` |
+| L View, short press | `INPUT_GAMEPAD_SELECT` for one frame (then `A_MENU_BACK` in menus) |
+| L View held 1 s, and again at 3 s | `vr_request_recentre()` and the `system` haptic on both hands. The renderer consumes `vr_take_recentre_request()`; the input module recentres nothing. There is no standing height in a seated racer, so 3 s does the same as 1 s |
+| System button | Never bound |
+
+A View press that was already down when focus returned is ignored until it is released and pressed again.
+
+**Haptics** (the `sfvr_haptics` queue, flushed once a frame in `vr_input_update` through `xrApplyHapticFeedback`, scaled by `vr.haptics` (default 0.6), `XR_FREQUENCY_UNSPECIFIED`, coalesced per hand to the strongest amplitude and longest pulse):
+
+| Event | Trigger | Pulse (before `vr.haptics`) | Hands |
+| --- | --- | --- | --- |
+| `system` | L View hold, 1 s and 3 s | 0.6 / 80 ms | both |
+| `impact` | `camera_set_shake` (`camera.c`, one fenced call; ship hits and weapon hits). Not gated by `vr.camera_shake` | 0.35 / 30 ms for a 0 s shake, up to 1.0 / 80 ms at `CAMERA_SHAKE_LONG` (2/3 s), linear in the duration. `CAMERA_SHAKE_SHORT` gives 0.415 / 37 ms | both |
+| `ui_click` | `sfx_play(SFX_MENU_SELECT)` (`sfx.c`, one fenced call): every menu select, toggle, back and the title screen's start | 0.5 / 30 ms | both. There is no pointing hand: select is on the right and navigation on the left |
+| `ui_hover` | not hooked (`SFX_MENU_MOVE` would be the place) | | |
+
+Handedness (`dominant_hand`) is not applied: thrust is always the right trigger. The settings page, which the standard calls for, is not built.
 
 ## 7. Settings and diagnostics (`vr.*` keys; env `WIPEOUT_VR_<KEY>`)
 
@@ -162,7 +205,9 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 | Command list and per-eye replay | 2 | host | Recorded and replayed in `render_gl.c` (`vr_render_gl.inc`). Host harness: 324 pixel and state checks pass under Xvfb + llvmpipe; the mono replay equals the flat renderer. Never run against the Frame's Zink |
 | HUD quad, mono panel, fades | 2 | host | HUD alpha solve, quad layer, panel and fade quads built (`vr_compose`, unit-tested) and rendered in the harness. Never submitted to a runtime; fade and HUD placement unworn |
 | Draw inventory rows | 2 | host | All rows implemented and verified as section 5 says. The game's own `scene.c`, `track.c`, `hud.c`, `main_menu.c` have not run: no game data |
-| Actions and system layer | 2 | not started | |
+| Actions, input merge, aliases, system layer (View, Menu, recentre request) | 2 | host | `src/vr/vr_input.c`. Unit-tested against a fake runtime and the game's real input layer; never run against SteamVR, never worn. Binding paths are copied from F-Zero X and Halo, unverified (section 6) |
+| Haptics (`system`, `impact`, `ui_click`) | 2 | host | Same tests. The buzz has never been felt. `ui_hover` is not hooked |
+| Recentre itself | 2 | host | View hold 1 s calls `vr_request_recentre()`; the renderer takes it at the next frame boundary (`vr_stage` tests). Never worn |
 | Eye dumps at 0, 90 and 180° yaw | 2 | host | `build/vr-harness/yaw-{000,090-right,180}/`: the product's own BMP dumps (`dump_frame`), plus PNG copies. Synthetic scene, not the game |
 | First wear | 3 | not started | Needs game data on the device |
 
@@ -177,6 +222,9 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 On macOS the VR build configures, compiles, links and passes its unit tests, but `vr_init()` fails there (no GLX), so it runs flat.
 
 **Unit tests (CTest).** The six sfvr tests plus its C++ header check, and `vr_xr` (a fake runtime behind the `vr_xr_api_t` function table: extension negotiation, session creation, the state machine from IDLE to FOCUSED, standby keeping the loop alive, stop and restart, exit, reference-space change, dt from display time, refresh-rate choice, failures, destroy order), `vr_settings`, `vr_math` (panel placement), `vr_clock` and `vr_paths`, and the phase-2 ones:
+
+- `vr_input`: the pad mapping with write-on-change and release on focus loss, the `sfvr_view` timing, the alias rules against the game's real `src/input.c`, and the haptic table.
+- `vr_input_xr`: a fake runtime checks setup order, the Frame profile only when the extension is enabled, bindings, per-frame sync and release, and the haptic calls.
 
 - `vr_view`: the eye and HUD maths against the game's own matrices (`src/types.c` is linked as the oracle). A centred identity head equals `render_set_view`'s matrix (default, with `follow_vehicle_rotation`, with `horizon_lock`); head yaw to the right looks along the game camera's right; each eye is half the IPD along the camera's right, scaled by `world_scale`; `head_translation` scales the head and not the eyes; recentre absorbs yaw; asymmetric fov hits the clip planes; the disparity sign; the HUD pose follows yaw and pitch and never roll; `diag_yaw`.
 - `vr_stage`: the command list (order, coalescing, growth), the fade curve, mode switches, recentre applied once, the panel placed then held, and the `[vr-perf]` line.

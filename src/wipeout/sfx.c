@@ -5,6 +5,10 @@
 #include "sfx.h"
 #include "game.h"
 
+#if WIPEOUT_VR
+	#include "../vr/vr_input.h"
+#endif
+
 #define QOA_IMPLEMENTATION
 #define QOA_NO_STDIO
 #include <qoa.h>
@@ -189,6 +193,11 @@ sfx_t *sfx_get_node(sfx_source_t source_index) {
 sfx_t *sfx_play(sfx_source_t source_index) {
 	sfx_t *sfx = sfx_get_node(source_index);
 	flags_set(sfx->flags, SFX_PLAY);
+	#if WIPEOUT_VR
+		if (source_index == SFX_MENU_SELECT) {
+			vr_haptic_ui_click();
+		}
+	#endif
 	return sfx;
 }
 
