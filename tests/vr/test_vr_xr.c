@@ -892,8 +892,10 @@ static void test_force_render_in_standby(void) {
 	CHECK_NEAR(xr.frame.views[0].pose.position[1], 1.6, 1e-6);
 	CHECK_NEAR(xr.frame.views[1].pose.position[0] - xr.frame.views[0].pose.position[0], 0.064, 1e-6);
 	CHECK_INT(fake.last_layer_count, 1);
-	CHECK(!vr_xr_sim_active(&xr)); // the sim still does not run
+	CHECK(vr_xr_sim_active(&xr)); // unattended tests need the game to run
 	CHECK_INT(fake.locate_views_calls, 0);
+	CHECK(one_frame(&xr, layers, 1));
+	CHECK(xr.frame_dt > 0);
 	vr_xr_destroy(&xr);
 }
 

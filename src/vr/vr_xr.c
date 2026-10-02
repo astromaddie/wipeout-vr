@@ -530,7 +530,8 @@ void vr_xr_request_exit(vr_xr_t *xr) {
 // Frame loop
 
 bool vr_xr_sim_active(const vr_xr_t *xr) {
-	return xr->session_running && xr->frame.should_render && xr->focused;
+	// force_render is for unattended tests, where nobody wears the headset: the game must run
+	return xr->session_running && ((xr->frame.should_render && xr->focused) || xr->config.force_render);
 }
 
 static void view_from_xr(vr_view_t *out, const XrView *in) {
