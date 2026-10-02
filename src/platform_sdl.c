@@ -6,6 +6,11 @@
 #include "utils.h"
 #include "mem.h"
 
+#if WIPEOUT_VR
+	#include "vr/vr.h"
+	#include "vr/vr_paths.h"
+#endif
+
 static uint64_t perf_freq = 0;
 static bool wants_to_exit = false;
 static SDL_Window *window;
@@ -277,6 +282,15 @@ uint32_t platform_store_userdata(const char *name, void *bytes, int32_t len) {
 			SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 		#endif
 
+		#if WIPEOUT_VR
+			// SteamVR needs GL 4.3+. The Frame's Zink gives a 4.6 core context
+			// (render_gl.c has the matching GLSL 330 shaders).
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+			SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+		#endif
+
 		platform_gl = SDL_GL_CreateContext(window);
 		SDL_GL_SetSwapInterval(1);
 	}
@@ -290,6 +304,13 @@ uint32_t platform_store_userdata(const char *name, void *bytes, int32_t len) {
 	}
 
 	void platform_end_frame(void) {
+		#if WIPEOUT_VR
+			if (vr_enabled()) {
+				// The frame is in the back buffer: show it on the panel, then end the XR frame
+				vec2i_t size = platform_screen_size();
+				vr_present_flat_frame(size.x, size.y);
+			}
+		#endif
 		SDL_GL_SwapWindow(window);
 	}
 
@@ -359,6 +380,11 @@ uint32_t platform_store_userdata(const char *name, void *bytes, int32_t len) {
 #endif
 
 int main(int argc, char *argv[]) {
+	#if WIPEOUT_VR && defined(__linux__)
+		// XR_KHR_opengl_enable on the Frame takes the GLX binding, so SDL must use x11
+		SDL_setenv("SDL_VIDEODRIVER", "x11", 0);
+	#endif
+
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
 
 	// Figure out the absolute asset and userdata paths. These may either be
@@ -383,6 +409,17 @@ int main(int argc, char *argv[]) {
 		sdl_path_userdata = SDL_GetPrefPath("phoboslab", "wipeout");
 		if (sdl_path_userdata) {
 			path_userdata = sdl_path_userdata;
+		}
+	#endif
+
+	#if WIPEOUT_VR
+		// The VR build keeps assets (in its wipeout/ subdirectory), saves and
+		// vr.toml in $XDG_DATA_HOME/WipEoutVR/, resolved at runtime. PATH_ASSETS
+		// and PATH_USERDATA are ignored.
+		const char *vr_data_dir = vr_paths_runtime_data_dir();
+		if (vr_data_dir[0]) {
+			path_assets = (char *)vr_data_dir;
+			path_userdata = (char *)vr_data_dir;
 		}
 	#endif
 
@@ -423,16 +460,47 @@ int main(int argc, char *argv[]) {
 	);
 
 	platform_video_init();
+
+	#if WIPEOUT_VR
+		if (vr_init(window)) {
+			// xrWaitFrame paces the loop, so no vsync
+			SDL_GL_SetSwapInterval(0);
+			vr_probe();
+		}
+	#endif
+
 	system_init();
 
 	while (!wants_to_exit) {
 		platform_pump_events();
+
+		#if WIPEOUT_VR
+			if (vr_enabled()) {
+				if (vr_exit_requested()) {
+					wants_to_exit = true;
+					continue;
+				}
+				if (!vr_frame_begin()) {
+					// The session is not running yet, or has stopped
+					SDL_Delay(8);
+					continue;
+				}
+				// Standby or no focus: the sim is frozen (dt = 0 in system_update) and audio stops
+				SDL_PauseAudioDevice(audio_device, vr_sim_frozen());
+			}
+		#endif
+
 		platform_prepare_frame();
 		system_update();
 		platform_end_frame();
 	}
 
 	system_cleanup();
+
+	#if WIPEOUT_VR
+		vr_shutdown();
+	#endif
+
 	platform_video_cleanup();
 
 	SDL_DestroyWindow(window);

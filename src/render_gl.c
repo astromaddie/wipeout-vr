@@ -57,6 +57,11 @@
 	#define FAR_PLANE (RENDER_FADEOUT_FAR)
 	#define RENDER_DEPTH_BUFFER_INTERNAL_FORMAT GL_DEPTH_COMPONENT24
 #endif
+
+#if WIPEOUT_VR
+	// The Steam Frame needs a GL 4.3 core context, which takes GLSL 330 only
+	#include "vr/vr_shaders_gl330.h"
+#endif
 	
 
 typedef struct {
@@ -118,6 +123,7 @@ static GLuint create_program(const char *vs_source, const char *fs_source) {
 // -----------------------------------------------------------------------------
 // Main game shaders
 
+#if !WIPEOUT_VR
 static const char * const SHADER_GAME_VS = SHADER_SOURCE(
 	attribute vec3 pos;
 	attribute vec2 uv;
@@ -160,6 +166,7 @@ static const char * const SHADER_GAME_FS = SHADER_SOURCE(
 		gl_FragColor = color;
 	}
 );
+#endif
 
 typedef struct {
 	GLuint program;
@@ -214,6 +221,7 @@ prg_game_t *shader_game_init(void) {
 // -----------------------------------------------------------------------------
 // POST Effect shaders
 
+#if !WIPEOUT_VR
 static const char * const SHADER_POST_VS = SHADER_SOURCE(
 	attribute vec3 pos;
 	attribute vec2 uv;
@@ -295,6 +303,7 @@ static const char * const SHADER_POST_FS_CRT = SHADER_SOURCE(
 		gl_FragColor = vec4(color,1.0);
 	}
 );
+#endif
 
 typedef struct {
 	GLuint program;

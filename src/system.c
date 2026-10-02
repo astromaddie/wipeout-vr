@@ -7,6 +7,10 @@
 
 #include "wipeout/game.h"
 
+#if WIPEOUT_VR
+	#include "vr/vr.h"
+#endif
+
 static double time_real;
 static double time_scaled;
 static double time_scale = 1.0;
@@ -33,6 +37,12 @@ void system_update(void) {
 	double time_real_now = platform_now();
 	double real_delta = time_real_now - time_real;
 	time_real = time_real_now;
+	#if WIPEOUT_VR
+		if (vr_enabled()) {
+			// The runtime's clock paces the frame: dt is the change in predictedDisplayTime
+			real_delta = vr_frame_dt();
+		}
+	#endif
 	tick_last = min(real_delta, 0.1) * time_scale;
 	time_scaled += tick_last;
 

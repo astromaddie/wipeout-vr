@@ -38,6 +38,7 @@ cmake_dependent_option(MINIMAL_BUNDLE "Do not include music/movies for web build
 option(PATH_ASSETS "Path to where the game assets should be located.")
 option(PATH_USERDATA "Path to where user data (e.g. game saves) should be located.")
 option(DEV_BUILD "Set asset/userdata paths to the source directory for testing" OFF)
+option(WIPEOUT_VR "Build the Steam Frame VR port (OpenXR; Linux, SDL2 + GL)" OFF)
 if (DEV_BUILD)
 	set(PATH_ASSETS "${CMAKE_SOURCE_DIR}/")
 	set(PATH_USERDATA "${CMAKE_SOURCE_DIR}/")
@@ -228,6 +229,10 @@ elseif("${PLATFORM}" STREQUAL SOKOL)
 	target_sources(wipeout PRIVATE src/platform_sokol.c)
 elseif("${PLATFORM}" STREQUAL NULL)
 	target_sources(wipeout PRIVATE src/platform_null.c)
+endif()
+
+if(WIPEOUT_VR)
+	include(WipEoutVR)
 endif()
 
 install(TARGETS wipeout)
