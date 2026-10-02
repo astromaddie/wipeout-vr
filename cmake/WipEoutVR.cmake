@@ -116,3 +116,13 @@ foreach(name xr settings math clock paths)
 	)
 	add_test(NAME vr_${name} COMMAND test_vr_${name})
 endforeach()
+
+# The eye and HUD maths against the game's own matrices: src/types.c is the oracle
+add_executable(test_vr_view tests/vr/test_vr_view.c src/types.c)
+set_property(TARGET test_vr_view PROPERTY C_STANDARD 11)
+target_include_directories(test_vr_view PRIVATE src third_party/sfvr/tests)
+target_link_libraries(test_vr_view PRIVATE wipeout_vr_core)
+target_compile_options(test_vr_view PRIVATE
+	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
+)
+add_test(NAME vr_view COMMAND test_vr_view)
