@@ -59,6 +59,20 @@ typedef struct {
 	PFN_xrEndFrame end_frame;
 	PFN_xrLocateViews locate_views;
 
+	// Actions (core OpenXR 1.0), used by vr_input.c
+	PFN_xrStringToPath string_to_path;
+	PFN_xrCreateActionSet create_action_set;
+	PFN_xrDestroyActionSet destroy_action_set;
+	PFN_xrCreateAction create_action;
+	PFN_xrSuggestInteractionProfileBindings suggest_interaction_profile_bindings;
+	PFN_xrAttachSessionActionSets attach_session_action_sets;
+	PFN_xrSyncActions sync_actions;
+	PFN_xrGetActionStateBoolean get_action_state_boolean;
+	PFN_xrGetActionStateFloat get_action_state_float;
+	PFN_xrGetActionStateVector2f get_action_state_vector2f;
+	PFN_xrApplyHapticFeedback apply_haptic_feedback;
+	PFN_xrStopHapticFeedback stop_haptic_feedback;
+
 	// Extension functions. vr_xr_instance_create() fills these through
 	// get_instance_proc_addr once the instance exists.
 	PFN_xrGetOpenGLGraphicsRequirementsKHR get_opengl_graphics_requirements;
@@ -86,7 +100,7 @@ typedef struct {
 	uint32_t acquired_index;
 } vr_swapchain_t;
 
-typedef struct {
+typedef struct vr_xr {
 	vr_xr_api_t api;
 	vr_xr_config_t config;
 
