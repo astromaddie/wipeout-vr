@@ -13,11 +13,12 @@ This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if
 | --- | --- |
 | Device | Steam Frame, SteamOS `vr`, SteamVR OpenXR, Turnip + Zink GL 4.6 |
 | Package route | Linux ARM64 ELF, compat tool `SteamLinuxRuntime_4-arm64`, devkit title `WipEoutVR` |
-| Build flag | CMake `-DWIPEOUT_VR=ON` defines `WIPEOUT_VR=1`. With the flag off, the flat build is unchanged |
+| Build flag | CMake `-DWIPEOUT_VR=ON` defines `WIPEOUT_VR=1` (default OFF). With the flag off, the flat build is unchanged (section 9 has the proof) |
+| GL profile | Core 4.3 context (SDL requests it, forward-compatible), with GLSL 330 variants of the shaders in `src/vr/vr_shaders_gl330.h`. See section 9 |
 | Base | wipeout-rewrite: C11, SDL2 + OpenGL 2.x/GLES2 renderer (`src/render_gl.c`), about 11k lines |
 | Rejected base | `alexbeavs-ps1-ports/wipeout-recomp` (psxrecomp). It emulates the PS1 GPU, which sees only 2D screen-space triangles, and the game culls to its native frustum. Stereo would need PGXP depth reconstruction plus MIPS reverse engineering. Decided with the user on 2026-10-02 |
 | Legal | Upstream has no license and may derive from the 2022 leaked PC source. Keep this repo **private**. Never commit game data |
-| Game data | User-supplied PSX NTSC data plus the PC menu models, laid out as upstream's README describes, under `$XDG_DATA_HOME/WipEoutVR/wipeout/`. Saves go under `$XDG_DATA_HOME/WipEoutVR/` |
+| Game data | User-supplied PSX NTSC data plus the PC menu models, laid out as upstream's README describes, under `$XDG_DATA_HOME/WipEoutVR/wipeout/` (default `~/.local/share`). Saves and `vr.toml` go in `$XDG_DATA_HOME/WipEoutVR/`. The VR build resolves both at runtime and ignores `PATH_ASSETS` and `PATH_USERDATA` |
 
 ## 2. Triage facts (from the upstream source, 2026-10-02)
 
@@ -41,6 +42,8 @@ This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if
    - **Stereo frame** (race scene, with a `render_set_view` from the race camera): the world segment is replayed per eye into the projection-layer swapchains, and the 2D segment is replayed once into the HUD swapchain.
    - **Mono frame** (intro, title, menus, highscores; and race while `vr.force_mono` is set): the whole list is replayed once with the game camera and native projection into the panel swapchain, shown on a world-locked quad.
 5. `vr_frame_end()`: `xrEndFrame` with the projection layer (stereo only), plus the HUD quad or the panel quad, plus the fade quad when one is active.
+
+**Current state (phase 1).** Steps 1, 2 and 5 exist. `platform_sdl.c` calls `vr_frame_begin()` after pumping SDL events, `system_update()` takes `dt` from `vr_frame_dt()` (the change in `predictedDisplayTime`, then the game's 0.1 s clamp) and `platform_end_frame()` calls `vr_present_flat_frame()`. That copies the window's back buffer into a quad swapchain and submits it as a world-locked quad layer, `vr.panel_width` wide, `vr.panel_distance` metres ahead of the head (levelled, heading only), re-anchored on `XrEventDataReferenceSpaceChangePending` and on every focus gain. The game still renders flat into its own backbuffer. Vsync is off, since `xrWaitFrame` paces the loop. While `shouldRender` is false or the app lacks focus, `dt` is 0 and SDL audio is paused, but the loop keeps waiting, beginning and ending frames. Steps 3 and 4 (command list, per-eye replay) are the next milestone; the seams are `vr_eye_acquire()`/`vr_eye_release()`/`vr_submit_projection()` in `src/vr/vr.h`.
 
 Every per-frame state change (pickup colour cycling, particles, `cycle_time`) happens inside `game_update`, so the per-eye replay cannot advance state twice.
 
@@ -96,12 +99,25 @@ Fallback profiles: Index and Touch. The final map needs the user's approval (pha
 
 ## 7. Settings and diagnostics (`vr.*` keys; env `WIPEOUT_VR_<KEY>`)
 
-The settings file is `$XDG_DATA_HOME/WipEoutVR/vr.toml`, using the standard keys from the `sfvr` registry, plus:
+The settings file is `$XDG_DATA_HOME/WipEoutVR/vr.toml` (`~/.local/share/WipEoutVR/vr.toml` when `XDG_DATA_HOME` is unset or relative). It has a top-level `version` (the sfvr schema, 1) and a `[vr]` table. `src/vr/vr_settings.c` reads it with the sfvr key registry (`third_party/sfvr`, which is a registry only and does no file IO) plus the port keys below:
 
-- `world_scale`: game units per metre. The default is derived from the ship hull length and must be confirmed at first wear.
-- `follow_vehicle_rotation` (off), `horizon_lock` (off), `hud_mode` (`near`), `hud_distance`, `hud_scale`.
+- A missing key gets its default, an invalid value (not a number, unknown enum or bool text) gets the default, an out-of-range value is clamped. Unknown keys, other tables, comments and layout are kept as they are. The file is rewritten, atomically (temp file, `fsync`, `rename`), only when something was added or repaired.
+- `WIPEOUT_VR_<KEY>` (for example `WIPEOUT_VR_RESOLUTION_SCALE=1.2`) overrides a key for the run. It is clamped the same way and never written back.
 
-Diagnostics: `force_render`, `diag_yaw`, `dump_frame`, `probe_seconds`, `timing`. Log prefixes are `[vr]` for state changes and `[vr-perf]` every 10 s.
+Port keys (not in the sfvr registry):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `world_scale` | 128.0 (**placeholder**, 16 to 1024) | Game units per metre. The chase camera sits 1024 units behind the ship, which should be about 8 m. Derive it from the ship hull length and confirm at first wear |
+| `force_mono` | false | Keep race frames on the mono panel, with no stereo (next milestone) |
+| `panel_distance` | 2.0 m (0.8 to 20) | The flat panel's distance |
+| `panel_width` | 2.4 m (0.5 to 10) | The flat panel's width; its height follows the window's aspect |
+
+The doc's other keys are sfvr standard keys with sfvr's defaults: `follow_vehicle_rotation` (off), `horizon_lock` (off), `hud_mode` (`near`), `hud_distance` (2.0 m), `hud_scale` (100), `resolution_scale` (1.0), `refresh_rate` (90), `camera_shake` (off), and the rest of the standard set. The settings page (phase 4) is not built.
+
+Diagnostics: `force_render`, `diag_yaw`, `dump_frame`, `probe_seconds`, `timing` are registry keys. `probe_seconds` and `force_render` (synthetic head at 1.6 m, layers submitted in standby) are implemented. `diag_yaw`, `dump_frame` and `timing` are read but do nothing yet, and the `[vr-perf]` line is not emitted yet. Log prefixes are `[vr]` for state changes and `[vr-perf]` every 10 s.
+
+**Probe.** `vr.probe_seconds = N` (or `WIPEOUT_VR_PROBE_SECONDS=N`) makes the VR build clear the left eye red and the right eye blue for N seconds after the session is running, before `system_init()` loads anything. It logs the swapchain format, eye size and graphics binding with the `[vr]` prefix. It waits up to 20 s for the session to start, and says so if standby (`shouldRender` false) is all it gets.
 
 ## 8. Status
 
@@ -110,11 +126,50 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 | Item | Phase | Level | Notes |
 | --- | --- | --- | --- |
 | Base chosen, fork created (private) | 0 | done | `astromaddie/wipeout-vr` |
-| OpenXR probe (colour per eye) | 0 | not started | |
-| Linux ARM64 flat build, devkit title, data dir | 1 | not started | |
+| `WIPEOUT_VR` flag; flat build unchanged | 0 | host | Proof in section 9: Mac clang and Linux arm64 gcc-12 |
+| OpenXR host (instance, session, spaces, swapchains, frame loop, extensions) | 0 | host | `src/vr/vr_xr.c`. Fake-runtime tests only; never run against SteamVR |
+| GL binding from SDL's x11 window | 0 | not run | `src/vr/vr_gl.c`. Built on Linux arm64; the F-Zero X probe ran the same calls on the Frame |
+| OpenXR probe (colour per eye) | 0 | not run | Implemented (`vr.probe_seconds`). **The phase-0 gate is still open: it has not run on the Frame** |
+| Settings (`vr.toml`, env overrides) | 1 | host | Unit-tested |
+| Linux ARM64 build (Docker), ABI check, tests | 1 | host | Section 9 |
+| Flat game on a world-locked panel | 1 | not run | Implemented; no game data and no headset, so it has never drawn a frame |
+| Device scripts (`LAUNCH-STEAM-FRAME.sh`, `deploy.sh`) | 1 | not run | Syntax-checked and dry-run only; the Frame was offline |
+| Devkit title, data dir on the Frame | 1 | not started | |
 | Command list and per-eye replay | 2 | not started | |
 | HUD quad, mono panel, fades | 2 | not started | |
 | Draw inventory rows | 2 | not started | See section 5 |
 | Actions and system layer | 2 | not started | |
 | Eye dumps at 0, 90 and 180° yaw | 2 | not started | |
 | First wear | 3 | not started | Needs game data on the device |
+
+## 9. Build, test and deploy
+
+**Build.** `cmake -S . -B build -DWIPEOUT_VR=ON` (Linux needs SDL2 with x11, GLEW, the X11 and GLX headers). The VR build:
+
+- fetches OpenXR-SDK release-1.1.63 (commit `f2448a8797c85814aa892efc1ab8707900fbcc78`) at configure time, checks the archive's SHA-256 (`5b8dac06…a88b6f`), and links its loader **statically**; the executable also links libstdc++ statically, so the only shared libraries to ship are SDL2 and GLEW (RPATH `$ORIGIN/lib`);
+- builds `third_party/sfvr` as a static library (copied unmodified, see its `VENDORED.md`) and `src/vr/` as `wipeout_vr_core` (everything except SDL and GL), then adds `vr.c`, `vr_gl.c` and `vr_xr_loader.c` to the game;
+- on Linux adds `-fsigned-char` (ARM64's `char` is unsigned).
+
+On macOS the VR build configures, compiles, links and passes its unit tests, but `vr_init()` fails there (no GLX), so it runs flat.
+
+**Unit tests (CTest).** The six sfvr tests plus its C++ header check, and `vr_xr` (a fake runtime behind the `vr_xr_api_t` function table: extension negotiation, session creation, the state machine from IDLE to FOCUSED, standby keeping the loop alive, stop and restart, exit, reference-space change, dt from display time, refresh-rate choice, failures, destroy order), `vr_settings`, `vr_math` (panel placement), `vr_clock` and `vr_paths`.
+
+**GL profile decision (2026-10-02): core 4.3 context plus GLSL 330 shaders in the VR build.** The alternative was a compatibility-profile context that keeps the game's GLSL 1.10 shaders.
+
+- SteamVR's `xrGetOpenGLGraphicsRequirementsKHR` reports 4.3 to 4.6, so the VR build must ask for at least 4.3.
+- Evidence for core: the F-Zero X M0-A probe on the Frame asked SDL for a 4.1 core (forward-compatible) context and got Zink on Turnip, Mesa 26.3.0-devel, **4.6 core**, a GLX context, and `xrCreateSession` with the Xlib binding succeeded.
+- Nothing measured a compatibility profile on the Frame, and Mesa's Zink documentation does not say whether it offers one. Choosing it would bet the phase-0 gate on an unmeasured path.
+- Cost of core: `render_gl.c` already uses VAOs and VBOs only, so the game's GL calls are valid in core. Only the shader text changes: `src/vr/vr_shaders_gl330.h` has `#version 330 core` variants of the game and the two post-effect programs (default, CRT), selected in `render_gl.c` by `#if WIPEOUT_VR`. The sampler is renamed `tex`, since `texture` is a built-in function in 330. Edits to upstream's file are the fences and one include.
+- Host evidence: in the Linux arm64 container under Xvfb with Mesa llvmpipe, the VR binary asked for 4.3 core, got a 4.5 core GLX context, built the Xlib binding, found no OpenXR runtime and fell back to flat, and `render_init()` compiled and linked all five GLSL 330 shaders (it reached `game_init()`, which stopped at the missing game data). The Frame's Zink driver has not compiled them.
+
+**GL binding.** SDL's video driver is forced to x11 (`SDL_VIDEODRIVER`, unless set). After `SDL_GL_CreateContext`, `vr_gl_init()` checks `SDL_GetWindowWMInfo` says x11, then reads `glXGetCurrentDisplay/Context/Drawable` and the context's FBConfig (`glXQueryContext` plus `glXChooseFBConfig`) through `SDL_GL_GetProcAddress`, and builds an `XrGraphicsBindingOpenGLXlibKHR` (`visualid` 0, as the F-Zero X probe did). The runtime's minimum GL version is checked against the context's `GL_MAJOR_VERSION`/`GL_MINOR_VERSION` before `xrCreateSession`.
+
+**Swapchains.** Colour only: `GL_SRGB8_ALPHA8` if offered, else `GL_SRGB8`, else RGBA8 with a warning. Eye size is the runtime's recommended size times `vr.resolution_scale`, clamped to the runtime's maximum. Copies into the images run with `GL_FRAMEBUFFER_SRGB` off (and restore it), so the already gamma-encoded frame lands unconverted.
+
+**Extensions.** `XR_KHR_opengl_enable` is required. `XR_VALVE_frame_controller_interaction` (enabled for the actions milestone) and `XR_FB_display_refresh_rate` (the nearest offered rate to `vr.refresh_rate` is requested at session start) are enabled only when the runtime offers them. The 72 Hz fallback logic is not built.
+
+**Linux ARM64 build.** `tools/docker/linux.Dockerfile` (Ubuntu 22.04, gcc-12, CMake 3.31.6, SDL2 2.30.11 built from source, GLEW from the distribution) and `tools/docker/build-linux.sh [off|on|package|abi|verify|all]`. `tools/check_linux_abi.py` (copied from F-Zero X) fails above glibc 2.35, on an unbundled library, or on a CPU level the code does not use.
+
+**Flat build unchanged.** `tools/verify_flat_build_unchanged.sh` builds upstream's HEAD (`b425ecb`) and the working tree with `WIPEOUT_VR=OFF`, the same compiler and flags (`-ffile-prefix-map` so `__FILE__` matches), and compares every object file. All are byte-identical except `render_gl.c.o`: the fences shift later lines, and upstream's `die()` prints `__LINE__`. For that file the preprocessed source is identical once the line number in those messages is masked, and the disassembled code is identical.
+
+**Device.** `tools/steam_frame/deploy.sh` rsyncs `build/package/WipEoutVR/` to `steamos@10.86.200.233:~/devkit-game/WipEoutVR/` and registers the devkit title `WipEoutVR` through `~/devkit-utils/steam-client-create-shortcut` (compat tool `SteamLinuxRuntime_4-arm64`, `steam_play=0`). `LAUNCH-STEAM-FRAME.sh` sets `SDL_VIDEODRIVER=x11`, logs to `run-stdout.txt` and execs the binary. Launch from the Frame's Steam library, never over SSH.
