@@ -17,6 +17,8 @@ static const sfvr_setting_key port_keys[] = {
 	{ "world_scale", SFVR_SETTING_FLOAT, 128.0, 16.0, 1024.0, NULL },
 	// Show the whole frame on the mono panel, even in a race.
 	{ "force_mono", SFVR_SETTING_BOOL, 0.0, 0.0, 1.0, NULL },
+	// Diagnostic: render the attract-mode race in stereo, for unattended eye dumps.
+	{ "diag_attract_stereo", SFVR_SETTING_BOOL, 0.0, 0.0, 1.0, NULL },
 	// The phase-1 flat panel: a world-locked quad.
 	{ "panel_distance", SFVR_SETTING_FLOAT, 2.0, 0.8, 20.0, NULL },
 	{ "panel_width", SFVR_SETTING_FLOAT, 2.4, 0.5, 10.0, NULL }

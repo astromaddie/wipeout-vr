@@ -67,7 +67,7 @@ static void test_registry(void) {
 	// the standard keys the doc's section 7 lists, and the port's own
 	const char *names[] = {
 		"world_scale", "follow_vehicle_rotation", "horizon_lock", "hud_mode", "hud_distance", "hud_scale",
-		"force_mono", "panel_distance", "panel_width",
+		"force_mono", "diag_attract_stereo", "panel_distance", "panel_width",
 		"resolution_scale", "refresh_rate", "probe_seconds", "force_render", "diag_yaw", "dump_frame", "timing",
 		"turn_mode", "snap_angle", "vignette", "seated", "haptics", "dominant_hand"
 	};
@@ -77,7 +77,7 @@ static void test_registry(void) {
 	CHECK_INT(vr_settings_index("nonsense"), -1);
 	CHECK_INT(vr_settings_index(NULL), -1);
 	CHECK(vr_settings_count() <= VR_SETTINGS_MAX_KEYS);
-	CHECK_INT(vr_settings_count(), sfvr_settings_count() + 4);
+	CHECK_INT(vr_settings_count(), sfvr_settings_count() + 5);
 
 	// env names
 	char name[64];

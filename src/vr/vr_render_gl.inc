@@ -450,12 +450,13 @@ static vec3_t vr_rec_transform(vec3_t pos) {
 
 // The game marks a frame that shows the race camera: stereo when the head can be
 // tracked and vr.force_mono is off. Called before render_set_view with the race camera.
+// stereo is false for the attract mode, unless vr.diag_attract_stereo is set.
 void render_vr_race_view(bool stereo) {
 	if (!vrr.recording || vrr.stereo) {
 		return;
 	}
 	const vr_render_settings_t *st = &vrr.cfg.settings;
-	if (!stereo || !vrr.views_ok || st->force_mono) {
+	if ((!stereo && !st->diag_attract_stereo) || !vrr.views_ok || st->force_mono) {
 		return;
 	}
 

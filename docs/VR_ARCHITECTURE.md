@@ -48,7 +48,7 @@ This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if
 - `platform_sdl.c` calls `vr_frame_begin()` after pumping SDL events; `system_update()` takes `dt` from `vr_frame_dt()` (the change in `predictedDisplayTime`, then the game's 0.1 s clamp). `render_frame_prepare()` starts recording and `render_frame_end()` replays; `platform_end_frame()` calls `vr_present_frame()`, which ends the XR frame with the layers the replay produced.
 - The renderer (`src/vr/vr_render_gl.inc`, compiled inside `render_gl.c`) asks a provider for the frame's views and for images to draw into. `vr.c` is the provider for the runtime; the host harness has a fake one.
 - Layers, bottom to top (`vr_compose.c`): the projection layer (stereo), the HUD quad (stereo), the world-locked panel quad (mono), a black fade quad in VIEW space while a mono/stereo switch fades.
-- While `shouldRender` is false or the app lacks focus, `dt` is 0 and SDL audio is paused, and the loop keeps waiting, beginning and ending frames. A standby frame records but replays nothing (unless `force_render`). Vsync is off, since `xrWaitFrame` paces the loop.
+- While `shouldRender` is false or the app lacks focus, `dt` is 0 and SDL audio is paused, and the loop keeps waiting, beginning and ending frames. A standby frame records but replays nothing. `force_render` overrides both: it draws and runs the sim, for unattended tests. Vsync is off, since `xrWaitFrame` paces the loop.
 - Which frames are stereo: `race.c` calls `render_vr_race_view(!g.is_attract_mode)` before the race camera's `render_set_view`, so every race frame is stereo (including the intro fly-over and the pause menu, whose 2D goes on the HUD quad) except the attract mode's cutting cameras, and any frame while `vr.force_mono` is set, or while the head cannot be tracked. Everything else (intro video, title, menus, the main menu's 3D models, highscores) is mono.
 - A mode switch (including the first frame) starts the fade and a recentre. A recentre is also requested by `vr_take_recentre_request()` (the input worker's contract; a weak stub in `vr.c` stands in until `vr_input.c` merges), by focus gain and by `XrEventDataReferenceSpaceChangePending`. It is applied at the start of the next stereo frame (the mono panel is re-placed at the next mono frame).
 - Not built: `hud_mode` far and leash (near is used, with a log line), `hud_visible`, a desktop mirror of the frame (the window shows nothing), GPU timing.
@@ -172,6 +172,7 @@ Port keys (not in the sfvr registry):
 | --- | --- | --- |
 | `world_scale` | 128.0 (**placeholder**, 16 to 1024) | Game units per metre. The chase camera sits 1024 units behind the ship, which should be about 8 m. Derive it from the ship hull length and confirm at first wear |
 | `force_mono` | false | Keep race frames on the mono panel, with no stereo |
+| `diag_attract_stereo` | false | Diagnostic: render the attract-mode race in stereo, so unattended eye dumps show real game stereo |
 | `panel_distance` | 2.0 m (0.8 to 20) | The flat panel's distance |
 | `panel_width` | 2.4 m (0.5 to 10) | The flat panel's width; its height follows the window's aspect |
 
@@ -179,7 +180,7 @@ The doc's other keys are sfvr standard keys with sfvr's defaults: `follow_vehicl
 
 Diagnostics: `force_render`, `diag_yaw`, `dump_frame`, `probe_seconds`, `timing` are registry keys, all implemented. Log prefixes are `[vr]` for state changes and `[vr-perf]` every 10 s.
 
-- `force_render`: submit layers in standby, with a synthetic head at 1.6 m (`vr_xr.c`), so unattended runs draw.
+- `force_render`: submit layers and run the sim in standby or without focus, with a synthetic head at 1.6 m (`vr_xr.c`), so unattended runs over SSH draw and play.
 - `diag_yaw` (degrees, positive turns left): turns the head about its centre after the recentre, so a synthetic head yaw is visible. The eyes are submitted with the turned poses.
 - `dump_frame=N`: the N-th replayed frame (counting from 1) writes `vr-eye0.bmp`, `vr-eye1.bmp` (24-bit) and `vr-hud.bmp` (32-bit, straight alpha) for a stereo frame, `vr-panel.bmp` for a mono one, and `vr-state.txt` (mode, recentre, head and eye poses, game-space eye positions, HUD pose, fade, counts, timings) into `<data>/vr-dumps/`. The pixels are copied into a PBO behind a fence and written by a later frame, so the frame never waits; nothing reads back in a normal frame.
 - `timing`: a `[vr-perf]` line every 10 s through `sfvr_perf`: `fps`, `missed` (display time advanced by more than 1.5 periods), `cpu` and the stages `record`, `replay` (both eyes) and `hud`, `eye=` left/right, `gpu=n/a`. All are CPU submission times. `record` is measured with a clock read per recorded call, so it only costs anything under `timing`.

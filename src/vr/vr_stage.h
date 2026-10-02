@@ -20,6 +20,7 @@ typedef struct {
 	float hud_scale; // percent
 	int hud_mode; // 0 near, 1 far, 2 leash (only near is built)
 	bool force_mono;
+	bool diag_attract_stereo; // the attract-mode race renders in stereo
 	float panel_distance;
 	float panel_width;
 	float diag_yaw; // radians

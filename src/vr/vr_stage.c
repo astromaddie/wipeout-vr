@@ -12,6 +12,7 @@ void vr_render_settings_from(vr_render_settings_t *out, const vr_settings_t *s) 
 	out->hud_scale = (float)vr_settings_get(s, "hud_scale");
 	out->hud_mode = (int)vr_settings_get(s, "hud_mode");
 	out->force_mono = vr_settings_get(s, "force_mono") != 0;
+	out->diag_attract_stereo = vr_settings_get(s, "diag_attract_stereo") != 0;
 	out->panel_distance = (float)vr_settings_get(s, "panel_distance");
 	out->panel_width = (float)vr_settings_get(s, "panel_width");
 	out->diag_yaw = (float)(vr_settings_get(s, "diag_yaw") * 3.14159265358979323846 / 180.0);
