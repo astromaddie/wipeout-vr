@@ -8,6 +8,10 @@
 #include "camera.h"
 #include "game.h"
 
+#if WIPEOUT_VR
+	#include "../vr/vr_input.h"
+#endif
+
 void camera_init(camera_t *camera, section_t *section) {
 	camera->section = section;
 	for (int i = 0; i < 10; i++) {
@@ -174,6 +178,9 @@ void camera_update_attract_random(camera_t *camera, ship_t *ship, droid_t *droid
 
 void camera_set_shake(camera_t *camera, float duration) {
 	camera->shake_timer = duration;
+	#if WIPEOUT_VR
+		vr_haptic_camera_shake(duration);
+	#endif
 }
 
 void camera_update_shake(camera_t *camera) {

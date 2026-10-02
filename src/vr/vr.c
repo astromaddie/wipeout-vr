@@ -5,6 +5,7 @@
 
 #include "vr.h"
 #include "vr_gl.h"
+#include "vr_input.h"
 #include "vr_log.h"
 #include "vr_math.h"
 #include "vr_paths.h"
@@ -20,6 +21,7 @@ static struct {
 	bool enabled;
 	vr_settings_t settings;
 	vr_xr_t xr;
+	vr_input_t *input; // the action set; NULL when it could not be made
 
 	// The phase-1 panel: the game's flat frame on a world-locked quad
 	vr_swapchain_t panel;
@@ -125,6 +127,7 @@ bool vr_init(void *sdl_window) {
 	vr_logf("session created: swapchain format 0x%llx (%s), eye %ux%u, resolution_scale %.2f",
 		(long long)vr.xr.color_format, vr.xr.color_srgb ? "sRGB" : "linear RGBA8",
 		vr.xr.eye[0].width, vr.xr.eye[0].height, config.resolution_scale);
+	vr.input = vr_input_create(&vr.xr);
 	vr.enabled = true;
 	return true;
 }
@@ -144,6 +147,8 @@ void vr_shutdown(void) {
 		waited += 5;
 	}
 
+	vr_input_destroy(vr.input, &vr.xr);
+	vr.input = NULL;
 	vr_xr_swapchain_destroy(&vr.xr, &vr.panel);
 	vr_xr_destroy(&vr.xr);
 	vr_gl_shutdown();
@@ -167,7 +172,10 @@ bool vr_frame_begin(void) {
 
 	vr.want_panel = false;
 	vr.want_projection = false;
-	if (!vr_xr_frame_begin(&vr.xr)) {
+	bool begun = vr_xr_frame_begin(&vr.xr);
+	// Actions after xrBeginFrame; with no frame, no focus or no session this releases every input
+	vr_input_update(vr.input, &vr.xr, setting("haptics"));
+	if (!begun) {
 		return false;
 	}
 

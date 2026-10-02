@@ -19,6 +19,11 @@
 #include "title.h"
 #include "intro.h"
 
+#if WIPEOUT_VR
+	#include "../vr/vr.h"
+	#include "../vr/vr_input.h"
+#endif
+
 #define TURN_ACCEL(V) NTSC_ACCELERATION(ANGLE_NORM_TO_RADIAN(FIXED_TO_FLOAT(YAW_VELOCITY(V))))
 #define TURN_VEL(V)   NTSC_VELOCITY(ANGLE_NORM_TO_RADIAN(FIXED_TO_FLOAT(YAW_VELOCITY(V))))
 
@@ -926,6 +931,12 @@ void game_init(void) {
 			input_bind(INPUT_LAYER_USER, save.buttons[action][1], action);
 		}
 	}
+
+	#if WIPEOUT_VR
+		if (vr_enabled()) {
+			vr_input_apply_default_bindings(save.buttons);
+		}
+	#endif
 
 
 	game_set_scene(GAME_SCENE_INTRO);
