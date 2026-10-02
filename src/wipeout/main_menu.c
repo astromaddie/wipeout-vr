@@ -661,6 +661,17 @@ static void objects_unpack_imp(Object **dest_array, int len, Object *src) {
 }
 
 
+#if WIPEOUT_VR
+static bool main_menu_asset_exists(const char *name) {
+	FILE *f = platform_open_asset(name, "rb");
+	if (!f) {
+		return false;
+	}
+	fclose(f);
+	return true;
+}
+#endif
+
 void main_menu_init(void) {
 	g.is_attract_mode = false;
 
@@ -671,13 +682,40 @@ void main_menu_init(void) {
 	background = image_get_texture("wipeout/textures/wipeout1.tim");
 	track_images = image_get_compressed_textures("wipeout/textures/track.cmp");
 
+#if WIPEOUT_VR
+	// leeg and msdos come from the PC version, which a PSX-only data set lacks:
+	// stand in models from the disc rather than abort
+	bool has_leeg = main_menu_asset_exists("wipeout/common/leeg.prm");
+	if (has_leeg) {
+		objects_unpack(models.race_classes, objects_load("wipeout/common/leeg.prm", image_get_compressed_textures("wipeout/common/leeg.cmp")));
+	}
+#else
 	objects_unpack(models.race_classes, objects_load("wipeout/common/leeg.prm", image_get_compressed_textures("wipeout/common/leeg.cmp")));
+#endif
 	objects_unpack(models.teams, objects_load("wipeout/common/teams.prm", texture_list_empty()));
 	objects_unpack(models.pilots, objects_load("wipeout/common/pilot.prm", image_get_compressed_textures("wipeout/common/pilot.cmp")));
 	objects_unpack(models.options, objects_load("wipeout/common/alopt.prm", image_get_compressed_textures("wipeout/common/alopt.cmp")));
 	objects_unpack(models.rescue, objects_load("wipeout/common/rescu.prm", image_get_compressed_textures("wipeout/common/rescu.cmp")));
 	objects_unpack(models.controller, objects_load("wipeout/common/pad1.prm", image_get_compressed_textures("wipeout/common/pad1.cmp")));
+#if WIPEOUT_VR
+	if (main_menu_asset_exists("wipeout/common/msdos.prm")) {
+		objects_unpack(models.misc, objects_load("wipeout/common/msdos.prm", image_get_compressed_textures("wipeout/common/msdos.cmp")));
+	}
+	else {
+		printf("PC menu models (msdos) missing: using stand-ins\n");
+		models.misc.championship = models.options.cd;
+		models.misc.single_race = models.controller;
+		models.misc.options = models.options.stopwatch;
+		models.misc.msdos = models.rescue;
+	}
+	if (!has_leeg) {
+		printf("PC menu models (leeg) missing: using stand-ins\n");
+		models.race_classes[0] = models.teams[0];
+		models.race_classes[1] = models.teams[1];
+	}
+#else
 	objects_unpack(models.misc, objects_load("wipeout/common/msdos.prm", image_get_compressed_textures("wipeout/common/msdos.cmp")));
+#endif
 
 	menu_reset(main_menu);
 	page_main_init(main_menu);
