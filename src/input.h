@@ -165,6 +165,9 @@ void input_unbind(input_layer_t layer,button_t button);
 void input_unbind_all(input_layer_t layer);
 
 uint8_t input_bound_to_action(button_t button);
+#if WIPEOUT_VR
+	uint8_t input_layer_bound_to_action(input_layer_t layer, button_t button);
+#endif
 
 void input_set_button_state(button_t button, float state);
 void input_set_mouse_pos(int32_t x, int32_t y);
