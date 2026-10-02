@@ -395,6 +395,12 @@ static render_stats_t end_stats = {0};
 
 static void render_flush(void);
 
+#if WIPEOUT_VR
+	// The stereo renderer: records the game's calls and replays them per eye
+	// (docs/VR_ARCHITECTURE.md section 4). It needs the statics above.
+	#include "vr/vr_render_gl.inc"
+#endif
+
 
 // static void gl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam) {
 // 	puts(message);
@@ -515,6 +521,12 @@ static mat4_t render_setup_3d_projection_mat(vec2i_t size) {
 }
 
 void render_set_screen_size(vec2i_t size) {
+	#if WIPEOUT_VR
+		if (vrr.attached) {
+			// The 2D layout has its own size in VR; the window is not drawn to
+			size = vec2i(vrr.cfg.settings.ui_width, vrr.cfg.settings.ui_height);
+		}
+	#endif
 	screen_size = size;
 	projection_mat_bb = render_setup_2d_projection_mat(screen_size);
 
@@ -523,6 +535,11 @@ void render_set_screen_size(vec2i_t size) {
 
 
 void render_set_resolution(render_resolution_t res) {
+	#if WIPEOUT_VR
+		if (vrr.attached) {
+			res = RENDER_RES_NATIVE; // no low-resolution modes in VR
+		}
+	#endif
 	render_res = res;
 
 	if (res == RENDER_RES_NATIVE) {
@@ -578,6 +595,11 @@ void render_set_resolution(render_resolution_t res) {
 }
 
 void render_set_post_effect(render_post_effect_t post) {
+	#if WIPEOUT_VR
+		if (vrr.attached) {
+			post = RENDER_POST_NONE; // no post effects in VR
+		}
+	#endif
 	error_if(post < 0 || post > NUM_RENDER_POST_EFFECTS, "Invalid post effect %d", post);
 	prg_post = prg_post_effects[post];
 }
@@ -587,6 +609,11 @@ vec2i_t render_size(void) {
 }
 
 void render_frame_prepare(void) {
+	#if WIPEOUT_VR
+		if (vr_begin_frame()) {
+			return;
+		}
+	#endif
 	use_program(prg_game);
 	glBindFramebuffer(GL_FRAMEBUFFER, backbuffer);
 	glViewport(0, 0, backbuffer_size.x, backbuffer_size.y);
@@ -605,6 +632,12 @@ void render_frame_prepare(void) {
 }
 
 void render_frame_end(void) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_end_frame();
+			return;
+		}
+	#endif
 	render_flush();
 
 	use_program(prg_post);
@@ -666,6 +699,12 @@ void render_flush(void) {
 
 
 void render_set_view(vec3_t pos, vec3_t angles) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_view(pos, angles);
+			return;
+		}
+	#endif
 	render_flush();
 	render_set_depth_write(true);
 	render_set_depth_test(true);
@@ -686,6 +725,12 @@ void render_set_view(vec3_t pos, vec3_t angles) {
 }
 
 void render_set_view_2d(void) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_view_2d();
+			return;
+		}
+	#endif
 	render_flush();
 	render_set_depth_test(false);
 	render_set_depth_write(false);
@@ -697,16 +742,34 @@ void render_set_view_2d(void) {
 }
 
 void render_set_model_mat(mat4_t *m) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_model_mat(m);
+			return;
+		}
+	#endif
 	render_flush();
 	glUniformMatrix4fv(prg_game->uniform.model, 1, false, m->m);
 }
 
 void render_set_depth_write(bool enabled) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_bool(VR_CMD_DEPTH_WRITE, enabled);
+			return;
+		}
+	#endif
 	render_flush();
 	glDepthMask(enabled);
 }
 
 void render_set_depth_test(bool enabled) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_bool(VR_CMD_DEPTH_TEST, enabled);
+			return;
+		}
+	#endif
 	render_flush();
 	if (enabled) {
 		glEnable(GL_DEPTH_TEST);
@@ -717,6 +780,12 @@ void render_set_depth_test(bool enabled) {
 }
 
 void render_set_depth_offset(float offset) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_cmdlist_push(&vrr.list, VR_CMD_DEPTH_OFFSET, 0)->u.offset = offset;
+			return;
+		}
+	#endif
 	render_flush();
 	if (offset == 0) {
 		glDisable(GL_POLYGON_OFFSET_FILL);
@@ -728,6 +797,14 @@ void render_set_depth_offset(float offset) {
 }
 
 void render_set_screen_position(vec2_t pos) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_cmd_t *c = vr_cmdlist_push(&vrr.list, VR_CMD_SCREEN_POS, 0);
+			c->u.screen[0] = pos.x;
+			c->u.screen[1] = pos.y;
+			return;
+		}
+	#endif
 	render_flush();
 	glUniform2f(prg_game->uniform.screen, pos.x, -pos.y);
 }
@@ -736,6 +813,13 @@ void render_set_blend_mode(render_blend_mode_t new_mode) {
 	if (new_mode == blend_mode) {
 		return;
 	}
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			blend_mode = new_mode;
+			vr_cmdlist_push(&vrr.list, VR_CMD_BLEND, 0)->u.blend = new_mode;
+			return;
+		}
+	#endif
 	render_flush();
 
 	blend_mode = new_mode;
@@ -748,6 +832,13 @@ void render_set_blend_mode(render_blend_mode_t new_mode) {
 }
 
 void render_set_cull_backface(bool enabled) {
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vrr.cull = enabled;
+			vr_rec_bool(VR_CMD_CULL, enabled);
+			return;
+		}
+	#endif
 	render_flush();
 	if (enabled) {
 		glEnable(GL_CULL_FACE);
@@ -761,6 +852,11 @@ void render_set_cull_backface(bool enabled) {
 
 
 vec3_t render_transform(vec3_t pos) {
+	#if WIPEOUT_VR
+		if (vrr.recording && vrr.stereo && vrr.cur_cam >= 0) {
+			return vr_rec_transform(pos);
+		}
+	#endif
 	return vec4_perspective_divide(vec3_transform_perspective(vec3_transform(pos, &view_mat), &projection_mat_3d));
 }
 
@@ -777,11 +873,24 @@ void render_push_tris(tris_t tris, uint16_t texture_index) {
 		tris.vertices[i].uv.x += t->offset.x;
 		tris.vertices[i].uv.y += t->offset.y;
 	}
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_tris(&tris);
+			return;
+		}
+	#endif
 	tris_buffer[tris_len++] = tris;
 }
 
 void render_push_sprite(vec3_t pos, vec2i_t size, rgba_t color, uint16_t texture_index) {
 	error_if(texture_index >= textures_len, "Invalid texture %d", texture_index);
+
+	#if WIPEOUT_VR
+		if (vrr.recording) {
+			vr_rec_sprite(pos, size, color, texture_index);
+			return;
+		}
+	#endif
 
 	vec3_t p1 = vec3_add(pos, vec3_transform(vec3(-size.x * 0.5, -size.y * 0.5, 0), &sprite_mat));
 	vec3_t p2 = vec3_add(pos, vec3_transform(vec3( size.x * 0.5, -size.y * 0.5, 0), &sprite_mat));

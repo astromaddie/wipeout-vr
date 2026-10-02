@@ -306,9 +306,8 @@ uint32_t platform_store_userdata(const char *name, void *bytes, int32_t len) {
 	void platform_end_frame(void) {
 		#if WIPEOUT_VR
 			if (vr_enabled()) {
-				// The frame is in the back buffer: show it on the panel, then end the XR frame
-				vec2i_t size = platform_screen_size();
-				vr_present_flat_frame(size.x, size.y);
+				// The renderer already replayed the frame into the swapchains: end the XR frame
+				vr_present_frame();
 			}
 		#endif
 		SDL_GL_SwapWindow(window);

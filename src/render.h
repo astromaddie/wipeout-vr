@@ -68,4 +68,11 @@ uint16_t render_textures_len(void);
 void render_textures_reset(uint16_t len);
 void render_textures_dump(const char *path);
 
+#if WIPEOUT_VR
+// Stereo renderer hooks (src/vr/vr_render_gl.inc)
+void render_vr_race_view(bool stereo); // the next render_set_view is the race camera
+bool render_vr_wide_cull(void); // distance-only culling: the frame is stereo
+void render_vr_sky(bool on); // draws between these calls follow the camera: re-translated per eye
+#endif
+
 #endif

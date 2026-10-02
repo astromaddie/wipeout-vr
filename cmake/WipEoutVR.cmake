@@ -59,6 +59,8 @@ add_library(wipeout_vr_core STATIC
 	src/vr/vr_clock.h
 	src/vr/vr_cmd.c
 	src/vr/vr_cmd.h
+	src/vr/vr_compose.c
+	src/vr/vr_compose.h
 	src/vr/vr_log.c
 	src/vr/vr_log.h
 	src/vr/vr_math.c
@@ -89,6 +91,8 @@ target_sources(wipeout PRIVATE
 	src/vr/vr.h
 	src/vr/vr_gl.c
 	src/vr/vr_gl.h
+	src/vr/vr_render.h
+	src/vr/vr_render_gl.inc
 	src/vr/vr_shaders_gl330.h
 	src/vr/vr_xr_loader.c
 )
@@ -112,7 +116,7 @@ endif()
 
 
 # Unit tests (fake runtime, no GL, no window, no game data)
-foreach(name xr settings math clock paths stage)
+foreach(name xr settings math clock paths stage compose)
 	add_executable(test_vr_${name} tests/vr/test_vr_${name}.c)
 	set_property(TARGET test_vr_${name} PROPERTY C_STANDARD 11)
 	target_include_directories(test_vr_${name} PRIVATE third_party/sfvr/tests)

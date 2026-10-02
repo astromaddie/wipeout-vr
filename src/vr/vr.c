@@ -4,10 +4,13 @@
 #include "SDL.h"
 
 #include "vr.h"
+#include "vr_compose.h"
 #include "vr_gl.h"
 #include "vr_log.h"
 #include "vr_math.h"
 #include "vr_paths.h"
+#include "vr_perf.h"
+#include "vr_render.h"
 #include "vr_xr.h"
 
 #include "platform.h"
@@ -16,24 +19,33 @@
 #define VR_PROBE_SESSION_WAIT_MS 20000
 #define VR_SHUTDOWN_WAIT_MS 1000
 
+// CONTRACT with the input worker: src/vr/vr_input.h declares this, and the
+// weak stub at the bottom of this file stands in until vr_input.c is merged.
+bool vr_take_recentre_request(void);
+
 static struct {
 	bool enabled;
 	vr_settings_t settings;
+	vr_render_settings_t render_settings;
 	vr_xr_t xr;
+	char dump_dir[1100];
 
-	// The phase-1 panel: the game's flat frame on a world-locked quad
+	// Surfaces besides the eyes: the HUD and the mono panel (ui size) and the fade (tiny)
+	vr_swapchain_t hud;
 	vr_swapchain_t panel;
-	vr_pose_t panel_pose;
-	bool anchor_valid;
+	vr_swapchain_t fade;
 	uint32_t recentres_seen;
 	uint32_t focus_gains_seen;
 
-	// What this frame submits
-	bool want_panel;
+	// What this frame submits: from the renderer's replay (layers), or from the probe
+	vr_layers_t layers;
+	bool layers_valid;
 	bool want_projection;
-	XrCompositionLayerQuad quad_layer;
-	XrCompositionLayerProjection projection_layer;
-	XrCompositionLayerProjectionView projection_views[2];
+	vr_compose_t compose;
+	XrCompositionLayerProjection probe_layer;
+	XrCompositionLayerProjectionView probe_views[2];
+
+	vr_perf_t perf;
 } vr;
 
 
@@ -63,6 +75,64 @@ double vr_frame_dt(void) {
 
 bool vr_sim_frozen(void) {
 	return vr.enabled && !vr_xr_sim_active(&vr.xr);
+}
+
+
+// -----------------------------------------------------------------------------
+// The renderer's provider: the runtime's frame and swapchains
+
+static bool frame_renders(void) {
+	return vr.xr.frame_open && (vr.xr.frame.should_render || vr.xr.config.force_render);
+}
+
+static const vr_frame_t *provider_frame(void *user, bool *renders) {
+	(void)user;
+	*renders = frame_renders();
+	return &vr.xr.frame;
+}
+
+// The HUD and the mono panel are the 2D layout's size; a swapchain of its own each
+static vr_swapchain_t *ui_swapchain(vr_surface_t surface) {
+	vr_swapchain_t *sc = surface == VR_SURFACE_HUD ? &vr.hud : &vr.panel;
+	if (sc->handle == XR_NULL_HANDLE) {
+		if (!vr_xr_swapchain_create(&vr.xr, sc, (uint32_t)vr.render_settings.ui_width, (uint32_t)vr.render_settings.ui_height)) {
+			return NULL;
+		}
+	}
+	return sc;
+}
+
+static bool provider_acquire(void *user, vr_surface_t surface, vr_target_t *out) {
+	(void)user;
+	vr_swapchain_t *sc;
+	if (surface == VR_SURFACE_EYE0 || surface == VR_SURFACE_EYE1) {
+		sc = &vr.xr.eye[surface - VR_SURFACE_EYE0];
+	}
+	else {
+		sc = ui_swapchain(surface);
+	}
+	uint32_t index;
+	if (!sc || sc->handle == XR_NULL_HANDLE || !vr_xr_swapchain_acquire(&vr.xr, sc, &index)) {
+		return false;
+	}
+	out->image = sc->images[index].image;
+	out->width = sc->width;
+	out->height = sc->height;
+	return true;
+}
+
+static void provider_release(void *user, vr_surface_t surface) {
+	(void)user;
+	vr_swapchain_t *sc = surface == VR_SURFACE_HUD ? &vr.hud
+		: surface == VR_SURFACE_PANEL ? &vr.panel
+		: &vr.xr.eye[surface - VR_SURFACE_EYE0];
+	vr_xr_swapchain_release(&vr.xr, sc);
+}
+
+static void provider_submit(void *user, const vr_layers_t *layers) {
+	(void)user;
+	vr.layers = *layers;
+	vr.layers_valid = true;
 }
 
 
@@ -125,7 +195,30 @@ bool vr_init(void *sdl_window) {
 	vr_logf("session created: swapchain format 0x%llx (%s), eye %ux%u, resolution_scale %.2f",
 		(long long)vr.xr.color_format, vr.xr.color_srgb ? "sRGB" : "linear RGBA8",
 		vr.xr.eye[0].width, vr.xr.eye[0].height, config.resolution_scale);
+	if (vr.xr.color_format != VR_GL_SRGB8_ALPHA8 && vr.xr.color_format != VR_GL_RGBA8) {
+		vr_logf("WARNING: the swapchain format has no alpha channel, so the HUD quad cannot be translucent");
+	}
 	vr.enabled = true;
+
+	// The stereo renderer records the game's draw calls and replays them (vr_render.h).
+	// It must be attached before render_init().
+	vr_render_settings_from(&vr.render_settings, &vr.settings);
+	vr_render_config_t render_config = {
+		.provider = {
+			.user = NULL,
+			.frame = provider_frame,
+			.acquire = provider_acquire,
+			.release = provider_release,
+			.submit = provider_submit
+		},
+		.settings = vr.render_settings
+	};
+	if (dir[0]) {
+		snprintf(vr.dump_dir, sizeof(vr.dump_dir), "%svr-dumps", dir);
+		render_config.dump_dir = vr.dump_dir;
+	}
+	vr_render_attach(&render_config);
+	vr_perf_init(&vr.perf);
 	return true;
 }
 
@@ -144,7 +237,10 @@ void vr_shutdown(void) {
 		waited += 5;
 	}
 
+	vr_render_detach();
+	vr_xr_swapchain_destroy(&vr.xr, &vr.hud);
 	vr_xr_swapchain_destroy(&vr.xr, &vr.panel);
+	vr_xr_swapchain_destroy(&vr.xr, &vr.fade);
 	vr_xr_destroy(&vr.xr);
 	vr_gl_shutdown();
 	vr_settings_free(&vr.settings);
@@ -157,72 +253,71 @@ void vr_shutdown(void) {
 bool vr_frame_begin(void) {
 	vr_xr_poll_events(&vr.xr);
 
-	// A system recentre (the runtime moved the LOCAL origin) or the app getting
-	// focus again (maybe another wearer): place the panel in front of the head anew.
+	// A system recentre (the runtime moved the LOCAL origin), the app getting focus
+	// again (maybe another wearer) or the input layer's request: the renderer
+	// recentres at the next frame boundary.
+	bool recentre = vr_take_recentre_request();
 	if (vr.recentres_seen != vr.xr.recentre_requests || vr.focus_gains_seen != vr.xr.focus_gains) {
 		vr.recentres_seen = vr.xr.recentre_requests;
 		vr.focus_gains_seen = vr.xr.focus_gains;
-		vr.anchor_valid = false;
+		recentre = true;
+	}
+	if (recentre) {
+		vr_render_request_recentre();
 	}
 
-	vr.want_panel = false;
+	vr.layers_valid = false;
 	vr.want_projection = false;
-	if (!vr_xr_frame_begin(&vr.xr)) {
+	return vr_xr_frame_begin(&vr.xr);
+}
+
+// Clears the fade swapchain's image to black at `alpha`: the quad the compositor blends over everything
+static bool fade_render(float alpha) {
+	if (vr.fade.handle == XR_NULL_HANDLE && !vr_xr_swapchain_create(&vr.xr, &vr.fade, 4, 4)) {
 		return false;
 	}
-
-	if (!vr.anchor_valid && vr.xr.frame.should_render) {
-		vr_pose_t head;
-		if (vr_xr_locate_head(&vr.xr, &head)) {
-			vr_panel_pose(&head, setting("panel_distance"), &vr.panel_pose);
-			vr.anchor_valid = true;
-		}
+	uint32_t index;
+	if (!vr_xr_swapchain_acquire(&vr.xr, &vr.fade, &index)) {
+		return false;
 	}
+	vr_gl_clear_image(vr.fade.images[index].image, vr.fade.width, vr.fade.height, 0, 0, 0, alpha);
+	vr_xr_swapchain_release(&vr.xr, &vr.fade);
 	return true;
 }
 
 void vr_frame_end(void) {
-	const XrCompositionLayerBaseHeader *layers[2];
+	const XrCompositionLayerBaseHeader *probe[1];
+	const XrCompositionLayerBaseHeader *const *layers = NULL;
 	uint32_t count = 0;
 
-	// The projection layer is the background; the panel is drawn over it
-	if (vr.want_projection) {
-		vr_xr_projection_layer(&vr.xr, &vr.projection_layer, vr.projection_views);
-		layers[count++] = (const XrCompositionLayerBaseHeader *)&vr.projection_layer;
+	if (vr.layers_valid) {
+		bool fade = vr.layers.fade_alpha > VR_FADE_MIN_ALPHA && fade_render(vr.layers.fade_alpha);
+		count = vr_compose_layers(&vr.compose, &vr.xr, &vr.layers, &vr.hud, &vr.panel, fade ? &vr.fade : NULL);
+		layers = vr.compose.list;
 	}
-	if (vr.want_panel) {
-		vr_pose_t pose = vr.panel_pose;
-		if (!vr.anchor_valid) {
-			// No head pose yet: straight ahead of the origin
-			vr_pose_t origin = { .orientation = {0, 0, 0, 1} };
-			vr_panel_pose(&origin, setting("panel_distance"), &pose);
-		}
-		vr_xr_quad_layer(&vr.xr, &vr.quad_layer, &vr.panel, &pose, setting("panel_width"));
-		layers[count++] = (const XrCompositionLayerBaseHeader *)&vr.quad_layer;
+	else if (vr.want_projection) {
+		// The probe's eyes
+		vr_xr_projection_layer(&vr.xr, &vr.probe_layer, vr.probe_views);
+		probe[0] = (const XrCompositionLayerBaseHeader *)&vr.probe_layer;
+		layers = probe;
+		count = 1;
 	}
 	vr_xr_frame_end(&vr.xr, layers, count);
-}
 
-static bool frame_renders(void) {
-	return vr.xr.frame_open && (vr.xr.frame.should_render || vr.xr.config.force_render);
-}
-
-void vr_present_flat_frame(uint32_t src_width, uint32_t src_height) {
-	if (frame_renders() && src_width > 0 && src_height > 0) {
-		if (vr.panel.handle != XR_NULL_HANDLE && (vr.panel.width != src_width || vr.panel.height != src_height)) {
-			vr_xr_swapchain_destroy(&vr.xr, &vr.panel); // the window was resized
-		}
-		if (vr.panel.handle == XR_NULL_HANDLE) {
-			vr_xr_swapchain_create(&vr.xr, &vr.panel, src_width, src_height);
-		}
-
-		uint32_t index;
-		if (vr.panel.handle != XR_NULL_HANDLE && vr_xr_swapchain_acquire(&vr.xr, &vr.panel, &index)) {
-			vr_gl_copy_backbuffer(vr.panel.images[index].image, vr.panel.width, vr.panel.height, src_width, src_height);
-			vr_xr_swapchain_release(&vr.xr, &vr.panel);
-			vr.want_panel = true;
+	if (vr.render_settings.timing) {
+		const vr_render_timing_t *t = vr_render_timing();
+		char line[256];
+		double now_s = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+		if (vr_perf_frame(&vr.perf, now_s, vr.xr.frame.predicted_display_time, vr.xr.frame.predicted_display_period,
+			t->record_ms, t->replay_ms, t->hud_ms, t->eye_ms, line, sizeof(line))
+		) {
+			printf("%s\n", line);
+			fflush(stdout);
 		}
 	}
+}
+
+void vr_present_frame(void) {
 	vr_frame_end();
 }
 
@@ -322,4 +417,14 @@ void vr_probe(void) {
 	}
 
 	vr_logf("probe: done, %u frames, %u with both eyes drawn", frames, rendered);
+}
+
+
+// -----------------------------------------------------------------------------
+// STUB for the input worker's contract. src/vr/vr_input.c defines the real
+// vr_take_recentre_request(); this weak definition only lets the build link
+// until that file is merged, and it never recentres. Delete it with the merge.
+
+__attribute__((weak)) bool vr_take_recentre_request(void) {
+	return false;
 }

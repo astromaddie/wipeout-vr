@@ -10,14 +10,15 @@
 // The VR host as the game's platform layer sees it (WIPEOUT_VR builds only).
 //
 // Per frame, from platform_sdl.c:
-//   vr_frame_begin()          xrWaitFrame + xrBeginFrame + xrLocateViews
-//   system_update()           dt from vr_frame_dt(); the sim is frozen when the
-//                             frame is not rendered or the app has no focus
-//   vr_present_flat_frame()   the game's normal frame into a world-locked panel,
-//                             then vr_frame_end()
+//   vr_frame_begin()      xrWaitFrame + xrBeginFrame + xrLocateViews; recentre requests
+//   system_update()       dt from vr_frame_dt(); the sim is frozen when the frame is
+//                         not rendered or the app has no focus. render_frame_prepare()
+//                         starts recording the game's draw calls and render_frame_end()
+//                         replays them (stereo: per eye plus the HUD; mono: the panel)
+//                         into the swapchains, through the provider in vr.c
+//   vr_present_frame()    xrEndFrame with the layers the replay produced
 //
-// The stereo renderer (next milestone) replaces the panel for race frames:
-// vr_eye_acquire()/vr_eye_release() per eye, then vr_submit_projection().
+// The renderer (vr_render.h) does the drawing; this file owns the runtime side.
 
 // Reads vr.toml, creates the XR instance and session on the SDL window's
 // current GL context. False (with the reason logged) when VR is unavailable;
@@ -34,8 +35,8 @@ const vr_settings_t *vr_settings(void);
 void vr_probe(void);
 
 // False when no frame was begun: the session is not running (yet), so the
-// caller should not run the game. When true, vr_frame_end() or
-// vr_present_flat_frame() must follow.
+// caller should not run the game. When true, vr_present_frame() (or
+// vr_frame_end()) must follow.
 bool vr_frame_begin(void);
 void vr_frame_end(void);
 const vr_frame_t *vr_frame(void);
@@ -48,11 +49,11 @@ double vr_frame_dt(void);
 // should be paused.
 bool vr_sim_frozen(void);
 
-// Copies the window's back buffer (src_width x src_height) into the panel
-// swapchain, queues the panel quad and ends the frame.
-void vr_present_flat_frame(uint32_t src_width, uint32_t src_height);
+// Ends the frame with what the renderer's replay produced: the projection
+// layer, the HUD quad or the panel quad, and the transition fade.
+void vr_present_frame(void);
 
-// Seams for the stereo renderer
+// The eye swapchains, for the probe (the renderer goes through its provider)
 bool vr_eye_acquire(int eye, uint32_t *gl_image, uint32_t *width, uint32_t *height);
 void vr_eye_release(int eye);
 void vr_submit_projection(void);
