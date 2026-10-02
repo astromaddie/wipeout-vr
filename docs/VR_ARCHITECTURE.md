@@ -196,21 +196,21 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 | Base chosen, fork created (private) | 0 | done | `astromaddie/wipeout-vr` |
 | `WIPEOUT_VR` flag; flat build unchanged | 0 | host | Proof in section 9: Mac clang and Linux arm64 gcc-12 |
 | OpenXR host (instance, session, spaces, swapchains, frame loop, extensions) | 0 | host | `src/vr/vr_xr.c`. Fake-runtime tests only; never run against SteamVR |
-| GL binding from SDL's x11 window | 0 | not run | `src/vr/vr_gl.c`. Built on Linux arm64; the F-Zero X probe ran the same calls on the Frame |
-| OpenXR probe (colour per eye) | 0 | not run | Implemented (`vr.probe_seconds`). **The phase-0 gate is still open: it has not run on the Frame** |
+| GL binding from SDL's x11 window | 0 | device | 2026-10-02: Zink on Turnip, GL 4.6 core, Xlib binding, `xrCreateSession` OK; the GLSL 330 shaders compile on the Frame |
+| OpenXR probe (colour per eye) | 0 | device | 2026-10-02 over SSH with `force_render`: sRGB `0x8c43` swapchains at 1728², 563 of 564 frames drawn in 8 s (72 Hz). Seeing red/blue in the headset is still owed (first wear). The runtime refuses `xrRequestDisplayRefreshRateFB` (UNSUPPORTED), so the rate is whatever the Frame's display settings say |
 | Settings (`vr.toml`, env overrides) | 1 | host | Unit-tested; `diag_yaw`, `dump_frame` and `timing` now do something |
 | Linux ARM64 build (Docker), ABI check, tests | 1 | host | Section 9 |
 | Flat game on a world-locked panel | 1 | host | Now the mono path: the panel is rendered into directly (no back-buffer copy). Equal to the flat renderer in the harness; never drawn a real frame, no game data and no headset |
-| Device scripts (`LAUNCH-STEAM-FRAME.sh`, `deploy.sh`) | 1 | not run | Syntax-checked and dry-run only; the Frame was offline |
-| Devkit title, data dir on the Frame | 1 | not started | |
+| Device scripts (`LAUNCH-STEAM-FRAME.sh`, `deploy.sh`) | 1 | device | `deploy.sh` copies, registers the devkit title and pushes `--data`. A Steam launch has not happened yet |
+| Devkit title, data dir on the Frame | 1 | device | Title `WipEoutVR` registered. Data from the user's NTSC-U disc (SCUS-94301) via `tools/data/prepare_psx_data.sh`, in `~/.local/share/WipEoutVR/wipeout/`. The PC-only `leeg` and `msdos` menu models are absent; stand-ins from the disc are used |
 | Command list and per-eye replay | 2 | host | Recorded and replayed in `render_gl.c` (`vr_render_gl.inc`). Host harness: 324 pixel and state checks pass under Xvfb + llvmpipe; the mono replay equals the flat renderer. Never run against the Frame's Zink |
 | HUD quad, mono panel, fades | 2 | host | HUD alpha solve, quad layer, panel and fade quads built (`vr_compose`, unit-tested) and rendered in the harness. Never submitted to a runtime; fade and HUD placement unworn |
 | Draw inventory rows | 2 | host | All rows implemented and verified as section 5 says. The game's own `scene.c`, `track.c`, `hud.c`, `main_menu.c` have not run: no game data |
 | Actions, input merge, aliases, system layer (View, Menu, recentre request) | 2 | host | `src/vr/vr_input.c`. Unit-tested against a fake runtime and the game's real input layer; never run against SteamVR, never worn. Binding paths are copied from F-Zero X and Halo, unverified (section 6) |
 | Haptics (`system`, `impact`, `ui_click`) | 2 | host | Same tests. The buzz has never been felt. `ui_hover` is not hooked |
 | Recentre itself | 2 | host | View hold 1 s calls `vr_request_recentre()`; the renderer takes it at the next frame boundary (`vr_stage` tests). Never worn |
-| Eye dumps at 0, 90 and 180° yaw | 2 | host | `build/vr-harness/yaw-{000,090-right,180}/`: the product's own BMP dumps (`dump_frame`), plus PNG copies. Synthetic scene, not the game |
-| First wear | 3 | not started | Needs game data on the device |
+| Eye dumps at 0, 90 and 180° yaw | 2 | host + device | Host: `build/vr-harness/yaw-{000,090-right,180}/`, synthetic scene. Device (2026-10-02, `force_render` + `diag_attract_stereo`): the title on the mono panel, and stereo eyes of the real attract race at yaw 0 with correct disparity; 7538 tris, about 1 ms per eye, 72 fps with 0 to 1 missed frames per 10 s. Yaw 90 and 180 on the device are not dumped yet |
+| First wear | 3 | not started | Ready: build and data are on the Frame |
 
 ## 9. Build, test and deploy
 
