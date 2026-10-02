@@ -98,6 +98,10 @@ void race_update(void) {
 
 
 	// Draw 3D
+	#if WIPEOUT_VR
+		// The race camera: a stereo frame, except in the attract mode's cutting cameras
+		render_vr_race_view(!g.is_attract_mode);
+	#endif
 	render_set_view(g.camera.position, g.camera.angle);
 	render_set_screen_position(g.camera.shake);
 

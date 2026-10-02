@@ -311,6 +311,16 @@ void track_draw(camera_t *camera) {
 		section_t *s = &g.track.sections[i];
 		vec3_t diff = vec3_sub(s->center, cam_pos);
 		float cam_dot = vec3_dot(diff, cam_dir);
+		#if WIPEOUT_VR
+			if (render_vr_wide_cull()) {
+				// A turned head sees what is beside and behind it: distance only
+				float reach = RENDER_FADEOUT_FAR + s->radius;
+				if (vec3_dot(diff, diff) < reach * reach) {
+					track_draw_section(s);
+				}
+				continue;
+			}
+		#endif
 		if (
 			cam_dot > -s->radius &&
 			cam_dot < (RENDER_FADEOUT_FAR * RENDER_FADEOUT_FAR) + s->radius

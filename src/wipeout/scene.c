@@ -134,7 +134,13 @@ void scene_draw(camera_t *camera) {
 	// Sky
 	render_set_depth_write(false);
 	mat4_set_translation(&sky_object->mat, vec3_add(camera->position, sky_offset));
+	#if WIPEOUT_VR
+		render_vr_sky(true); // follows the camera: each eye re-translates it to itself
+	#endif
 	object_draw(sky_object, &sky_object->mat);
+	#if WIPEOUT_VR
+		render_vr_sky(false);
+	#endif
 	render_set_depth_write(true);
 
 	// Objects
@@ -148,6 +154,12 @@ void scene_draw(camera_t *camera) {
 		vec3_t diff = vec3_sub(camera->position, object->origin);
 		float cam_dot = vec3_dot(diff, cam_dir);
 		float dist_sq = vec3_dot(diff, diff);
+		#if WIPEOUT_VR
+			if (render_vr_wide_cull()) {
+				// A turned head sees what is beside and behind it: distance only
+				cam_dot = -1;
+			}
+		#endif
 		if (
 			cam_dot < object->radius && 
 			dist_sq < (RENDER_FADEOUT_FAR * RENDER_FADEOUT_FAR)
