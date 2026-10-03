@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Screenshots and checks of build/mockups/cockpit-mockup.html with headless Chrome.
+"""Screenshots, checks and sheets of build/mockups/cockpit-mockup.html with headless Chrome.
 
-    python3 tools/mockup/shoot_cockpit_mockup.py            # the review set + contact sheet
+    python3 tools/mockup/shoot_cockpit_mockup.py               # hybrid shots, hybrid sheet, asset sheet
+    python3 tools/mockup/shoot_cockpit_mockup.py --variations  # also the C1-C3 comparison set
     python3 tools/mockup/shoot_cockpit_mockup.py --one 'var=C1&ship=3&look=fwd' out.png
 
-Writes build/mockups/shots/*.png, build/mockups/checks.json and
-build/mockups/cockpit-contact-sheet.png. WebGL runs on SwiftShader. Like the
-mockup itself, the output shows game data: keep it under build/.
+Writes build/mockups/shots/*.png, build/mockups/checks.json,
+build/mockups/cockpit-hybrid-sheet.png, build/mockups/cockpit-assets.png and,
+with --variations, build/mockups/cockpit-contact-sheet.png. WebGL runs on
+SwiftShader. Like the mockup itself, the output shows game data: keep it under
+build/.
 """
 import argparse
 import concurrent.futures as cf
@@ -27,8 +30,9 @@ CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacO
 FLAGS = ["--headless=new", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--hide-scrollbars",
          "--disable-gpu-sandbox", "--no-first-run", "--no-default-browser-check", "--virtual-time-budget=60000"]
 
-# The review set. Ships 0 (Feisar, the long-nosed hull with the widest front)
-# and 1 (Qirex, the narrow wedge) are the two most different shapes.
+# One ship per hull shape: Feisar (0), Qirex (1), AG Systems (3), Auricom (5).
+# Feisar and Qirex are the two most different shapes.
+SHAPES = [(0, "Feisar"), (1, "Qirex"), (3, "AG Systems"), (5, "Auricom")]
 VARIATIONS = ["C1", "C2", "C3"]
 SHIPS = [0, 1]
 
@@ -80,7 +84,7 @@ def checks(query):
     return json.loads(html.unescape(m.group(1)))
 
 
-def review_set():
+def variations_set():
     jobs = []
     for v in VARIATIONS:
         for s in SHIPS:
@@ -88,15 +92,20 @@ def review_set():
         jobs.append((f"var={v}&ship=0&look=left", SHOTS / f"{v}-ship0-left.png", f"{v}: look left"))
         jobs.append((f"var={v}&ship=0&look=back", SHOTS / f"{v}-ship0-back.png", f"{v}: look back"))
         jobs.append((f"var={v}&ship=0&view=outside", SHOTS / f"{v}-ship0-outside.png", f"{v}: outside, cabin in ship"))
-    jobs.append(("var=C1&ship=0&look=fwd&bank=follow", SHOTS / "C1-ship0-fwd-bankfollow.png", "C1 bank-follow (opt-in)"))
-    jobs.append(("var=C1&ship=0&look=fwd&bank=cockpit", SHOTS / "C1-ship0-fwd-bankcockpit.png", "C1 alt: cockpit banks, head level"))
-    jobs.append(("var=C1&ship=0&view=outside&ws=96&oyaw=-90&opitch=6&odist=4.6", SHOTS / "C1-ship0-side-ws96.png", "world_scale 96: 8.8 m ship"))
-    jobs.append(("var=C1&ship=0&view=outside&ws=128&oyaw=-90&opitch=6&odist=4.6", SHOTS / "C1-ship0-side-ws128.png", "world_scale 128 (recommended): 6.6 m"))
-    jobs.append(("var=C1&ship=0&view=outside&ws=192&oyaw=-90&opitch=6&odist=4.6", SHOTS / "C1-ship0-side-ws192.png", "world_scale 192: 4.4 m ship"))
     return jobs
 
 
-def contact_sheet(rows, out):
+def hybrid_set():
+    jobs = []
+    for s, name in SHAPES:
+        for look, cap in (("look=fwd", "forward"), ("look=left", "look left"), ("look=back", "look back"), ("view=outside", "outside")):
+            jobs.append((f"var=H&ship={s}&{look}", SHOTS / f"H-ship{s}-{look.split('=')[1]}.png", f"{name}: {cap}"))
+    jobs.append(("var=H&ship=0&look=fwd&bank=follow", SHOTS / "H-ship0-bank-follow.png", "bank-follow (opt-in)"))
+    jobs.append(("var=H&ship=0&look=fwd&bank=cockpit", SHOTS / "H-ship0-bank-cockpit.png", "cockpit banks, head level (opt-in)"))
+    return jobs
+
+
+def contact_sheet(rows, out, title, subtitle, cols=5):
     # rows: [(label, [(png, caption)])]
     cells = []
     for label, items in rows:
@@ -107,14 +116,13 @@ body{{margin:0;background:#0d0f12;color:#ddd;font:15px Helvetica,Arial,sans-seri
 h1{{margin:0 0 6px;font-size:22px;color:#f0c840}} h2{{margin:14px 0 6px;font-size:17px;color:#f0c840}}
 .row{{display:flex;gap:8px}} figure{{margin:0;width:390px}} img{{width:390px;height:390px;display:block;object-fit:cover}}
 figcaption{{font-size:13px;color:#b8c0ca;padding:3px 0}}
-</style></head><body><h1>WipEout VR, Cockpit C (full canopy): three variations</h1>
-<div style="color:#9aa3ad">Mono approximation of the Frame per-eye view (about 110 x 110 degrees). Mockup only; nothing is built.</div>
+</style></head><body><h1>{html.escape(title)}</h1>
+<div style="color:#9aa3ad">{html.escape(subtitle)}</div>
 {''.join(cells)}</body></html>"""
-    tmp = SHOTS / "contact-sheet.html"
+    tmp = SHOTS / "sheet.html"
     tmp.write_text(page)
-    n_rows = len(rows)
-    height = 90 + n_rows * 460
-    width = 14 * 2 + 6 * 398
+    height = 90 + len(rows) * 460
+    width = 14 * 2 + cols * 398
     if out.exists():
         out.unlink()
     chrome([f"--window-size={width},{height}", f"--screenshot={out}", tmp.as_uri()], lambda _: out.exists() and out.stat().st_size > 0)
@@ -122,10 +130,19 @@ figcaption{{font-size:13px;color:#b8c0ca;padding:3px 0}}
     return out
 
 
+def asset_sheet(out):
+    dom = chrome(["--dump-dom", url("sheet=assets")], lambda p: "</html>" in p.read_text(errors="replace"))
+    m = re.search(r'data-sheet-height="(\d+)"', dom)
+    if not m:
+        raise RuntimeError("asset sheet did not render")
+    return shot("sheet=assets", out, (2400, int(m.group(1))))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--one", nargs=2, metavar=("QUERY", "OUT"))
     ap.add_argument("--checks", metavar="QUERY")
+    ap.add_argument("--variations", action="store_true", help="also shoot the C1-C3 comparison set")
     ap.add_argument("--size", default="1000x1000")
     ap.add_argument("-j", type=int, default=4)
     a = ap.parse_args()
@@ -138,22 +155,27 @@ def main():
         return
     if SHOTS.exists():
         shutil.rmtree(SHOTS)
-    jobs = review_set()
+    SHOTS.mkdir(parents=True)
+    jobs = hybrid_set() + (variations_set() if a.variations else [])
+    check_queries = {f"H-{name}": f"var=H&ship={s}&look=fwd" for s, name in SHAPES}
+    if a.variations:
+        check_queries.update({f"{v}-ship{s}": f"var={v}&ship={s}&look=fwd" for v in VARIATIONS for s in SHIPS})
     with cf.ThreadPoolExecutor(a.j) as ex:
         list(ex.map(lambda j: shot(j[0], j[1], size), jobs))
-        res = dict(zip([f"{v}-ship{s}" for v in VARIATIONS for s in SHIPS],
-                       ex.map(checks, [f"var={v}&ship={s}&look=fwd" for v in VARIATIONS for s in SHIPS])))
+        res = dict(zip(check_queries, ex.map(checks, check_queries.values())))
     (ROOT / "build" / "mockups" / "checks.json").write_text(json.dumps(res, indent=1))
     by = {j[1].name: (j[1], j[2]) for j in jobs}
-    rows = []
-    for v in VARIATIONS:
-        items = [by[f"{v}-ship{s}-fwd.png"] for s in SHIPS] + [by[f"{v}-ship0-left.png"], by[f"{v}-ship0-back.png"], by[f"{v}-ship0-outside.png"]]
-        rows.append((v, items))
-    rows.append(("Bank modes (C1, same turn) and world_scale (outside, body reference is a 1.8 m pilot)", [
-        by["C1-ship0-fwd.png"][:1] + ("level in banks (default)",), by["C1-ship0-fwd-bankfollow.png"], by["C1-ship0-fwd-bankcockpit.png"],
-        by["C1-ship0-side-ws96.png"], by["C1-ship0-side-ws128.png"], by["C1-ship0-side-ws192.png"]]))
-    out = contact_sheet(rows, ROOT / "build" / "mockups" / "cockpit-contact-sheet.png")
-    print(f"wrote {len(jobs)} shots, {out}")
+    sub = "Mono approximation of the Frame per-eye view (about 110 x 110 degrees), world_scale 128, the game's eye point. Mockup only; nothing is built."
+    rows = [(name, [by[f"H-ship{s}-{v}.png"] for v in ("fwd", "left", "back", "outside")]) for s, name in SHAPES]
+    rows.append(("Bank modes (Feisar, same turn)", [(by["H-ship0-fwd.png"][0], "level in banks (default)"), by["H-ship0-bank-follow.png"], by["H-ship0-bank-cockpit.png"]]))
+    contact_sheet(rows, ROOT / "build" / "mockups" / "cockpit-hybrid-sheet.png", "WipEout VR cockpit H: slim frame, split dash, on all four hulls", sub, cols=4)
+    if a.variations:
+        vrows = []
+        for v in VARIATIONS:
+            vrows.append((v, [by[f"{v}-ship{s}-fwd.png"] for s in SHIPS] + [by[f"{v}-ship0-left.png"], by[f"{v}-ship0-back.png"], by[f"{v}-ship0-outside.png"]]))
+        contact_sheet(vrows, ROOT / "build" / "mockups" / "cockpit-contact-sheet.png", "WipEout VR, Cockpit C (full canopy): the three earlier variations", sub)
+    asset_sheet(ROOT / "build" / "mockups" / "cockpit-assets.png")
+    print(f"wrote {len(jobs)} shots, the hybrid sheet and the asset sheet")
 
 
 if __name__ == "__main__":

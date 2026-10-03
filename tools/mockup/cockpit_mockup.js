@@ -304,7 +304,7 @@ function cutHull(geo, box) {
 // hud.c uses before ui_scale); each placement says how many millimetres one
 // HUD pixel is in the cockpit.
 
-const K = 6; // canvas pixels per HUD pixel
+let K = 6; // canvas pixels per HUD pixel (the asset sheet and pod faces change it while drawing)
 const FONT = {};       // size -> {img, glyphs, space, tinted: Map}
 const IMG = {};        // speedo, wicons[]
 const UI_DEFAULT = [128, 128, 128], UI_ACCENT = [123, 98, 12];
@@ -398,7 +398,7 @@ const INSTRUMENTS = {
 		drawSpeedoBars(ctx, 2, 5, s.speedBars, null);
 		ctx.drawImage(IMG.speedo, 2 * K, 0, IMG.speedo.width * K, IMG.speedo.height * K);
 	} },
-	shield: { label: 'Shield', w: 64, h: 24, minText: 8, draw(ctx, s) {
+	shield: { label: 'Status slot (shield timer)', w: 64, h: 24, minText: 8, draw(ctx, s) {
 		const on = s.shield > 0;
 		drawText(ctx, 'SHIELD', 2, 2, '8', on ? UI_DEFAULT : UI_ACCENT);
 		const segs = 8, filled = Math.ceil(segs * s.shield);
@@ -434,6 +434,27 @@ const INSTRUMENTS = {
 };
 
 
+// A pod face as the build will draw it: the face texture (tex texels, times k
+// here), cleared to the bezel colour, each element drawn at its texel position
+// with K = its ui_scale. The same draw functions draw the game font and art.
+const FACE_K = 2;
+function composeFace(ctx, pnl, insts, k, visible) {
+	ctx.imageSmoothingEnabled = false;
+	ctx.fillStyle = '#0b0d10';
+	ctx.fillRect(0, 0, pnl.tex[0] * k, pnl.tex[1] * k);
+	const keep = K;
+	for (const it of insts) {
+		if (it.panel !== pnl.id || it.tx === undefined || (visible && !visible(it.id))) continue;
+		ctx.save();
+		ctx.translate(it.tx * k, it.ty * k);
+		K = it.scale * k;
+		it.def.draw(ctx, FACE_STATE.current);
+		ctx.restore();
+	}
+	K = keep;
+}
+const FACE_STATE = { current: null };
+
 // Canvas sizes from the game font's glyph widths (called once the font loads).
 function sizeInstruments() {
 	const I = INSTRUMENTS;
@@ -446,7 +467,6 @@ function sizeInstruments() {
 // --------------------------------------------------------------------------
 // Cockpit parts shared by the variations
 
-const TEAM_ACCENT = { 0: 0xd8b030, 1: 0xc8302c, 2: 0x2f9a58, 3: 0x2f5fc8 };
 const TEAM_NAME = ['AG SYSTEMS', 'AURICOM', 'QIREX', 'FEISAR'];
 const PILOT_NAME = ['John Dekka', 'Daniel Chang', 'Arial Tetsuo', 'Anastasia Cherovoski', 'Kel Solaar', 'Arian Tetsuo', 'Sofia de la Rente', 'Paul Jackson'];
 const PILOT_TEAM = [0, 0, 1, 1, 2, 2, 3, 3];
@@ -454,6 +474,15 @@ const COL = {
 	cabin: 0x30343b, cabinDark: 0x1c1e22, seat: 0x3b3337, frameLight: 0xa9b0b9, frameDark: 0x4a4f58,
 	frameGun: 0x353a42, bezel: 0x141619, body: 0xd07a30,
 };
+
+// Material slots. The geometry names a slot, never a colour. The fixed slots
+// below are authored colours; trim_primary and trim_secondary are sampled at
+// runtime from the ship's own textures (sampleTrim). glass is the canopy.
+const SLOTS = {
+	frame: COL.frameLight, frame_dark: COL.frameDark, frame_gun: COL.frameGun, cabin: COL.cabin,
+	cabin_dark: COL.cabinDark, seat: COL.seat, bezel: COL.bezel, lens: 0x0c1a24,
+};
+const SLOT_EMISSIVE = { trim_primary: 0.25, trim_secondary: 0.25, lens: 0.3 };
 
 // The cabin: the volume cut out of the hull (lesson 30: keep the hull whole,
 // cut only the cabin), in eye-relative metres at REF. The opening runs from
@@ -474,25 +503,25 @@ function cabinParts(add, accent, H, o = {}) {
 	const wall = (pts) => {
 		// pts: [r, f] along the wall; strip from the floor to the hull surface
 		const lo = pts.map(([r, f]) => P(r, c.floor, f)), hi = pts.map(([r, f]) => P(r, top(r, f), f));
-		add('cabin', loft(lo, hi), COL.cabin);
+		add('tub', loft(lo, hi), 'cabin');
 		return hi;
 	};
 	const left = wall(sampleLine(N, (t) => [-hw, c.rear + (c.front - c.rear) * t]));
 	const right = wall(sampleLine(N, (t) => [hw, c.rear + (c.front - c.rear) * t]));
 	const front = wall(sampleLine(N, (t) => [-hw + 2 * hw * t, c.front]));
 	wall(sampleLine(N, (t) => [-hw + 2 * hw * t, c.rear]));
-	add('cabin', boxM(-hw, hw, c.floor - 0.02, c.floor, c.rear, c.front), COL.cabinDark);
+	add('tub', boxM(-hw, hw, c.floor - 0.02, c.floor, c.rear, c.front), 'cabin_dark');
 	// coaming: a rim along the cut edge, on the hull surface
 	const rw = o.rim ?? 0.04, rh = o.rimH ?? 0.03;
-	for (const edge of [left, right, front]) add('cabin', tube(edge, rw, rh), COL.frameDark);
+	for (const edge of [left, right, front]) add('sills', tube(edge, rw, rh), 'frame_dark');
 	if (o.accentRim !== false) {
-		for (const edge of [left, right]) add('cabin', tube(edge.map((v) => v.clone().add(new THREE.Vector3(0, rh * REF * 0.6, 0))), rw * 0.5, rh * 0.4), accent, { emissive: 0.25 });
+		for (const edge of [left, right]) add('sills', tube(edge.map((v) => v.clone().add(new THREE.Vector3(0, rh * REF * 0.6, 0))), rw * 0.5, rh * 0.4), 'trim_primary');
 	}
 	// seat: cushion and a reclined back
-	add('cabin', boxM(-0.21, 0.21, c.floor, c.floor + 0.14, -0.30, 0.16), COL.seat);
-	add('cabin', hexahedron(
+	add('seat', boxM(-0.21, 0.21, c.floor, c.floor + 0.14, -0.30, 0.16), 'seat');
+	add('seat', hexahedron(
 		[P(-0.21, c.floor + 0.10, -0.33), P(0.21, c.floor + 0.10, -0.33), P(0.21, c.floor + 0.10, -0.23), P(-0.21, c.floor + 0.10, -0.23)],
-		[P(-0.20, -0.30, -0.36), P(0.20, -0.30, -0.36), P(0.20, -0.30, -0.29), P(-0.20, -0.30, -0.29)]), COL.seat);
+		[P(-0.20, -0.30, -0.36), P(0.20, -0.30, -0.36), P(0.20, -0.30, -0.29), P(-0.20, -0.30, -0.29)]), 'seat');
 	return { left, right, front };
 }
 
@@ -502,17 +531,17 @@ function bulkhead(add, accent, top, f = -0.40, w = CABIN.halfWidth + 0.06, o = {
 	const b = CABIN.floor;
 	add('bulkhead', hexahedron(
 		[P(-w, b, f - 0.05), P(w, b, f - 0.05), P(w, b, f), P(-w, b, f)],
-		[P(-w * 0.9, top, f - 0.05), P(w * 0.9, top, f - 0.05), P(w * 0.9, top, f), P(-w * 0.9, top, f)]), o.color ?? COL.frameDark);
-	add('bulkhead', boxM(-w * 0.9, w * 0.9, top - 0.025, top + 0.01, f - 0.055, f + 0.006), accent, { emissive: 0.25 });
+		[P(-w * 0.9, top, f - 0.05), P(w * 0.9, top, f - 0.05), P(w * 0.9, top, f), P(-w * 0.9, top, f)]), 'frame_dark');
+	add('bulkhead', boxM(-w * 0.9, w * 0.9, top - 0.025, top + 0.01, f - 0.055, f + 0.006), 'trim_primary');
 	// headrest tower: the bulkhead's centre rises behind the head, carrying the pad
-	if (top < 0.10) add('bulkhead', boxM(-0.13, 0.13, top - 0.02, 0.10, f - 0.05, f), o.color ?? COL.frameDark);
-	add('bulkhead', boxM(-0.10, 0.10, -0.15, 0.07, f, f + 0.06), COL.cabinDark);  // head pad
+	if (top < 0.10) add('headrest', boxM(-0.13, 0.13, top - 0.02, 0.10, f - 0.05, f), 'frame_dark');
+	add('headrest', boxM(-0.10, 0.10, -0.15, 0.07, f, f + 0.06), 'cabin_dark');  // head pad
 }
 
 // Roll hoop: posts from the bulkhead's top corners to the canopy strut tips,
 // and a crossbar joining the tips (Star Fox 1d68555: the frame needs a visible
 // load path to the cabin).
-function rollHoop(add, base, tips, t, color = COL.frameLight) {
+function rollHoop(add, base, tips, t, color = 'frame') {
 	add('hoop', tube([base[0], tips[0]], t, t), color);
 	add('hoop', tube([base[1], tips[1]], t, t), color);
 	add('hoop', tube([tips[0], tips[1]], t, t), color);
@@ -558,39 +587,110 @@ function pedestal(H, r, f, uTop, w, d) {
 	return boxM(r - w / 2, r + w / 2, u0 - 0.03, uTop, f - d / 2, f + d / 2);
 }
 
+// C1's slim teardrop frame (also the hybrid's): 2.4 cm struts, a raked
+// windscreen from 0.85 m up the deck, top rails back to the roll hoop.
+function slimFrame(add, H) {
+	const t = 0.024;                               // 2.4 cm struts
+	// teardrop canopy: a raked windscreen from far up the deck, rails back to the hoop
+	const cw = (f) => 0.41 - 0.14 * Math.max(0, f - 0.1) / 0.75 - 0.02 * Math.max(0, -f - 0.2) / 0.2;
+	const sL = sillLine(H, cw, 0.85, -0.40, 10);
+	const sR = mirror(sL);
+	const aL = [sL[0], P(-0.32, -0.16, 0.56), P(-0.25, 0.30, 0.10)];   // A-pillar
+	const tL = [aL[2], P(-0.29, 0.33, -0.12), P(-0.27, 0.31, -0.42)];  // top rail to the hoop
+	const aR = mirror(aL), tR = mirror(tL);
+	add('struts', tube(aL, t, t), 'frame');
+	add('struts', tube(aR, t, t), 'frame');
+	add('struts', tube([aL[2], P(0, 0.345, 0.08), aR[2]], t, t), 'frame');   // header
+	add('struts', tube(tL, t, t), 'frame');
+	add('struts', tube(tR, t, t), 'frame');
+	add('sills', tube(sL, t * 0.8, t * 0.8), 'frame');                      // canopy sill rails
+	add('sills', tube(sR, t * 0.8, t * 0.8), 'frame');
+	bulkhead(add, null, -0.06);
+	rollHoop(add, [P(-0.37, -0.06, -0.42), P(0.37, -0.06, -0.42)], [tL[2], tR[2]], 0.03);
+	// glass: windscreen, sides, top
+	const ws0 = sampleLine(8, (k) => sL[0].clone().lerp(sR[0], k));
+	const ws1 = sampleLine(8, (k) => aL[2].clone().lerp(aR[2], k).add(new THREE.Vector3(0, Math.sin(Math.PI * k) * 0.04 * REF, 0)));
+	add('glass', loft(ws0, ws1));
+	add('glass', loft(sampleLine(10, (k) => pathAt([...aL, ...tL.slice(1)], k)), sampleLine(10, (k) => pathAt(sL, k))));
+	add('glass', loft(sampleLine(10, (k) => pathAt([...aR, ...tR.slice(1)], k)), sampleLine(10, (k) => pathAt(sR, k))));
+	add('glass', loft(tL, tR));
+	return { sL, sR, aL, aR, tL, tR };
+}
+
+
+// The hybrid's dash: C2's full-width shell and two angled pods at about ±27°,
+// with the nose clear between them, plus a weapon keystone. Each pod carries
+// one face texture at its planned resolution (the `tex` size, 0.547 mm per
+// texel); instruments are placed in texels and drawn at an integer ui_scale,
+// the way the build will draw them with the game's own 2D UI calls.
+const POD = { w: 0.28, h: 0.16, tex: [512, 292] };
+function hybridDash(add, H) {
+	const pods = [
+		{ id: 'left', group: 'podL', at: [-0.235, -0.335, 0.47], w: POD.w, h: POD.h, depth: 0.08, tex: POD.tex },
+		{ id: 'right', group: 'podR', at: [0.235, -0.335, 0.47], w: POD.w, h: POD.h, depth: 0.08, tex: POD.tex },
+		{ id: 'weapon', group: 'weaponPod', at: [0, -0.405, 0.555], w: 0.07, h: 0.07, depth: 0.04, tex: [128, 128] },
+	];
+	for (const p of pods.slice(0, 2)) {
+		add(p.group, panelGeometry(p), 'bezel');
+		const pf = panelFrame(p);
+		// glareshield lip over the pod, with a trim edge along its front
+		const a = pf.c.clone().addScaledVector(pf.y, (p.h / 2 + 0.008) * REF), wv = pf.x.clone().multiplyScalar((p.w / 2 + 0.012) * REF), nv = pf.n.clone().multiplyScalar(-0.10 * REF);
+		const up = (v, k) => v.clone().addScaledVector(pf.y, k * REF);
+		const lipB = [a.clone().sub(wv), a.clone().add(wv), a.clone().add(wv).add(nv), a.clone().sub(wv).add(nv)];
+		const lipT = [up(lipB[0], 0.022).addScaledVector(pf.n, 0.03 * REF), up(lipB[1], 0.022).addScaledVector(pf.n, 0.03 * REF), up(lipB[2], 0.015), up(lipB[3], 0.015)];
+		add(p.group, hexahedron(lipB, lipT), 'frame_dark');
+		add(p.group, tube([lipT[0].clone().addScaledVector(pf.n, 0.002 * REF), lipT[1].clone().addScaledVector(pf.n, 0.002 * REF)], 0.008, 0.008), 'trim_secondary');
+	}
+	// dash shell: one body across the cabin under both pods, low in the centre
+	// (below the nose line), resting on the hull deck
+	const dl = (r) => (Math.abs(r) < 0.12 ? -0.455 : -0.455 + (Math.abs(r) - 0.12) * 0.25);
+	const xs = [-0.40, -0.12, 0.12, 0.40];
+	for (let i = 0; i + 1 < xs.length; i++) {
+		const r0 = xs[i], r1 = xs[i + 1];
+		const b0 = (H.top(r0, 0.42) ?? CABIN.floor) - 0.03, b1 = (H.top(r1, 0.42) ?? CABIN.floor) - 0.03;
+		add('dash', hexahedron(
+			[P(r0, b0, 0.58), P(r1, b1, 0.58), P(r1, b1, 0.36), P(r0, b0, 0.36)],
+			[P(r0, dl(r0), 0.58), P(r1, dl(r1), 0.58), P(r1, dl(r1) - 0.01, 0.38), P(r0, dl(r0) - 0.01, 0.38)]), 'cabin');
+	}
+	// weapon keystone: a small display standing on the dash centre, trimmed
+	const k = pods[2];
+	add(k.group, panelGeometry(k), 'bezel');
+	add(k.group, panelGeometry({ ...k, w: k.w + 0.016, h: k.h + 0.016, depth: 0.025, at: k.at.map((v, i) => v + (i === 2 ? 0.006 : 0)) }), 'trim_primary');
+	add(k.group, boxM(-0.025, 0.025, -0.462, k.at[1] - k.h / 2 + 0.005, k.at[2] + 0.005, k.at[2] + 0.04), 'frame_dark');
+	const I = INSTRUMENTS;
+	return {
+		panels: pods,
+		instruments: [
+			{ id: 'lap', panel: 'left', tx: 18, ty: 18, scale: 2 },
+			{ id: 'position', panel: 'left', tx: 512 - 18 - 2 * I.position.w, ty: 18, scale: 2 },
+			{ id: 'laptime', panel: 'left', tx: Math.round((512 - 2 * I.laptime.w) / 2), ty: 292 - 2 * I.laptime.h - 26, scale: 2 },
+			{ id: 'speedo', panel: 'right', tx: Math.round((512 - 3 * I.speedo.w) / 2), ty: 30, scale: 3 },
+			{ id: 'shield', panel: 'right', tx: Math.round((512 - 3 * I.shield.w) / 2), ty: 292 - 3 * I.shield.h - 30, scale: 3 },
+			{ id: 'weapon', panel: 'weapon', tx: Math.round((128 - 3 * I.weapon.w) / 2), ty: Math.round((128 - 3 * I.weapon.h) / 2), scale: 3 },
+		],
+	};
+}
+
 // --------------------------------------------------------------------------
-// The variations
+// The variations. H, the hybrid, is the approved design (2026-10-04); C1-C3
+// stay selectable for comparison.
 
 const VARIATIONS = [
+	{
+		id: 'H', name: 'Hybrid: slim frame, split dash',
+		blurb: "C1's slim teardrop frame with C2's full-width dash: angled pods at ±27°, the nose clear between them, and the weapon on a keystone display between the pods at their focal distance.",
+		build(add, accent, H) {
+			cabinParts(add, accent, H, { rim: 0.035, rimH: 0.025 });
+			slimFrame(add, H);
+			return hybridDash(add, H);
+		},
+	},
 	{
 		id: 'C1', name: 'Slim frame, centre cluster',
 		blurb: 'Thin silver struts and a raked windscreen. One compact binnacle on the centre line, below the nose.',
 		build(add, accent, H) {
 			cabinParts(add, accent, H, { rim: 0.035, rimH: 0.025 });
-			const t = 0.024;                               // 2.4 cm struts
-			// teardrop canopy: a raked windscreen from far up the deck, rails back to the hoop
-			const cw = (f) => 0.41 - 0.14 * Math.max(0, f - 0.1) / 0.75 - 0.02 * Math.max(0, -f - 0.2) / 0.2;
-			const sL = sillLine(H, cw, 0.85, -0.40, 10);
-			const sR = mirror(sL);
-			const aL = [sL[0], P(-0.32, -0.16, 0.56), P(-0.25, 0.30, 0.10)];   // A-pillar
-			const tL = [aL[2], P(-0.29, 0.33, -0.12), P(-0.27, 0.31, -0.42)];  // top rail to the hoop
-			const aR = mirror(aL), tR = mirror(tL);
-			add('struts', tube(aL, t, t), COL.frameLight);
-			add('struts', tube(aR, t, t), COL.frameLight);
-			add('struts', tube([aL[2], P(0, 0.345, 0.08), aR[2]], t, t), COL.frameLight);   // header
-			add('struts', tube(tL, t, t), COL.frameLight);
-			add('struts', tube(tR, t, t), COL.frameLight);
-			add('struts', tube(sL, t * 0.8, t * 0.8), COL.frameLight);                     // sill rails
-			add('struts', tube(sR, t * 0.8, t * 0.8), COL.frameLight);
-			bulkhead(add, accent, -0.06);
-			rollHoop(add, [P(-0.37, -0.06, -0.42), P(0.37, -0.06, -0.42)], [tL[2], tR[2]], 0.03);
-			// glass: windscreen, sides, top
-			const ws0 = sampleLine(8, (k) => sL[0].clone().lerp(sR[0], k));
-			const ws1 = sampleLine(8, (k) => aL[2].clone().lerp(aR[2], k).add(new THREE.Vector3(0, Math.sin(Math.PI * k) * 0.04 * REF, 0)));
-			add('glass', loft(ws0, ws1));
-			add('glass', loft(sampleLine(10, (k) => pathAt([...aL, ...tL.slice(1)], k)), sampleLine(10, (k) => pathAt(sL, k))));
-			add('glass', loft(sampleLine(10, (k) => pathAt([...aR, ...tR.slice(1)], k)), sampleLine(10, (k) => pathAt(sR, k))));
-			add('glass', loft(tL, tR));
+			slimFrame(add, H);
 			// dash: one binnacle on a pedestal, below the nose line
 			const panel = { id: 'binnacle', at: [0, -0.40, 0.48], w: 0.40, h: 0.19, depth: 0.06 };
 			add('dash', panelGeometry(panel), COL.bezel);
@@ -643,7 +743,7 @@ const VARIATIONS = [
 			add('struts', tube(sL, t * 0.9, td), COL.frameGun);
 			add('struts', tube(sR, t * 0.9, td), COL.frameGun);
 			bulkhead(add, accent, 0.0, -0.40, CABIN.halfWidth + 0.08);
-			rollHoop(add, [P(-0.38, 0.0, -0.42), P(0.38, 0.0, -0.42)], [tL[3], tR[3]], 0.055, COL.frameGun);
+			rollHoop(add, [P(-0.38, 0.0, -0.42), P(0.38, 0.0, -0.42)], [tL[3], tR[3]], 0.055, 'frame_gun');
 			// glass
 			const ws0 = sampleLine(8, (k) => sL[0].clone().lerp(sR[0], k));
 			const ws1 = sampleLine(8, (k) => pathAt(header, k));
@@ -766,6 +866,104 @@ function pathAt(pts, k) {
 	return pts[pts.length - 1].clone();
 }
 
+
+// --------------------------------------------------------------------------
+// Trim colours, sampled from the ship's own textures (2026-10-04 decision).
+//
+// Rule (the build will run the same rule in C when the ships load):
+//  1. For every triangle of the ship model, take 6 fixed barycentric samples
+//     (the 3 permutations of (2/3, 1/6, 1/6) and of (1/6, 5/12, 5/12)), each
+//     weighted by area / 6 in game units squared.
+//  2. Sample colour = texel (nearest) * vertex colour * 2, as the game's shader
+//     shows it, clamped to 255. Transparent texels are skipped.
+//  3. Keep samples with HSV saturation >= 0.35 and value >= 0.20 (drops white,
+//     grey and black: logos, numbers, glass, engine grilles).
+//  4. Histogram the kept weight by hue in 24 bins of 15°, smoothed [1 2 1]
+//     around the circle. Primary = the weighted mean RGB of the samples in the
+//     peak bin and its two neighbours.
+//  5. Secondary = the same for the strongest smoothed bin at least 45° (3 bins)
+//     from the primary peak with at least 15% of its weight.
+//  6. Both are brought to a value (max channel) between 0.70 and 0.95,
+//     keeping hue and saturation: the PSX paint is dark and noisy, and trim
+//     has to read as an accent. If there is no secondary, it is the primary
+//     at 55% of that value.
+//  7. If under 0.5% of the area is saturated at all, the trim is neutral: the
+//     frame silver and frame grey slots.
+const TRIM_RULE = { samples: 6, minSat: 0.35, minVal: 0.20, bins: 24, smooth: [1, 2, 1], secondaryMinBins: 3, secondaryMinWeight: 0.15, fallbackValue: 0.55, valueRange: [0.70, 0.95], neutralBelowShare: 0.005 };
+const BARY = [[2 / 3, 1 / 6, 1 / 6], [1 / 6, 2 / 3, 1 / 6], [1 / 6, 1 / 6, 2 / 3], [1 / 6, 5 / 12, 5 / 12], [5 / 12, 1 / 6, 5 / 12], [5 / 12, 5 / 12, 1 / 6]];
+
+function rgbToHsv(r, g, b) {
+	const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+	let h = 0;
+	if (d > 0) {
+		if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+		h *= 60; if (h < 0) h += 360;
+	}
+	return [h, mx ? d / mx : 0, mx / 255];
+}
+
+function sampleTrim(stream, info, px, aw, ah) {
+	const R = TRIM_RULE, nb = R.bins;
+	const bins = new Float64Array(nb), acc = Array.from({ length: nb }, () => [0, 0, 0, 0]);
+	let total = 0;
+	for (let t = 0; t < info.count; t++) {
+		const v0 = (info.first + t) * 3;
+		const p = [0, 1, 2].map((k) => new THREE.Vector3(stream.pos[(v0 + k) * 3], stream.pos[(v0 + k) * 3 + 1], stream.pos[(v0 + k) * 3 + 2]));
+		const area = p[1].clone().sub(p[0]).cross(p[2].clone().sub(p[0])).length() / 2;
+		if (area <= 0) continue;
+		const w = area / R.samples;
+		for (const b of BARY) {
+			let u = 0, v = 0; const vc = [0, 0, 0];
+			for (let k = 0; k < 3; k++) {
+				u += b[k] * stream.uv[(v0 + k) * 2]; v += b[k] * stream.uv[(v0 + k) * 2 + 1];
+				for (let c = 0; c < 3; c++) vc[c] += b[k] * stream.col[(v0 + k) * 4 + c];
+			}
+			const x = Math.min(aw - 1, Math.floor(u * aw)), y = Math.min(ah - 1, Math.floor(v * ah)), o = (y * aw + x) * 4;
+			if (px[o + 3] === 0) continue;
+			const rgb = [0, 1, 2].map((c) => Math.min(255, px[o + c] * vc[c] / 127.5));
+			total += w;
+			const [h, sat, val] = rgbToHsv(...rgb);
+			if (sat < R.minSat || val < R.minVal) continue;
+			const bi = Math.floor(h / (360 / nb)) % nb;
+			bins[bi] += w;
+			for (let c = 0; c < 3; c++) acc[bi][c] += rgb[c] * w;
+			acc[bi][3] += w;
+		}
+	}
+	const sm = new Float64Array(nb);
+	for (let i = 0; i < nb; i++) sm[i] = R.smooth[0] * bins[(i + nb - 1) % nb] + R.smooth[1] * bins[i] + R.smooth[2] * bins[(i + 1) % nb];
+	const meanAround = (i) => {
+		const m = [0, 0, 0, 0];
+		for (const j of [i - 1, i, i + 1]) { const a = acc[(j + nb) % nb]; for (let c = 0; c < 4; c++) m[c] += a[c]; }
+		return m[3] > 0 ? [m[0] / m[3], m[1] / m[3], m[2] / m[3]] : null;
+	};
+	const norm = (rgb) => {
+		const mx = Math.max(...rgb, 1) / 255, tgt = Math.min(R.valueRange[1], Math.max(R.valueRange[0], mx));
+		return rgb.map((c) => Math.round(c * tgt / mx));
+	};
+	let pk = 0;
+	for (let i = 1; i < nb; i++) if (sm[i] > sm[pk]) pk = i;
+	const sat = bins.reduce((a, b) => a + b, 0);
+	const primaryRaw = meanAround(pk) || [128, 128, 128];
+	let sk = -1;
+	for (let i = 0; i < nb; i++) {
+		const dist = Math.min(Math.abs(i - pk), nb - Math.abs(i - pk));
+		if (dist >= R.secondaryMinBins && sm[i] >= R.secondaryMinWeight * sm[pk] && (sk < 0 || sm[i] > sm[sk])) sk = i;
+	}
+	const primary = norm(primaryRaw);
+	let secondary = sk >= 0 ? norm(meanAround(sk)) : primary.map((c) => Math.round(c * R.fallbackValue));
+	const share = total ? sat / total : 0;
+	if (share < R.neutralBelowShare) {
+		const rgbOf = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+		primary.splice(0, 3, ...rgbOf(SLOTS.frame)); secondary = rgbOf(SLOTS.frame_dark); sk = -2;
+	}
+	const hex = (c) => (c[0] << 16) | (c[1] << 8) | c[2];
+	return {
+		primary, secondary, primaryHex: hex(primary), secondaryHex: hex(secondary),
+		primaryHue: pk * (360 / nb), secondaryHue: sk >= 0 ? sk * (360 / nb) : null, secondaryFallback: sk === -1, neutral: sk === -2, saturatedShare: share,
+	};
+}
+
 // --------------------------------------------------------------------------
 // Geometry checks: segment/triangle, point/triangle distance
 
@@ -851,6 +1049,15 @@ async function main() {
 	const skyMesh = new THREE.Mesh(streamGeometry(sky, 0, sky.n / 3), skyMat);
 	skyScene.add(skyMesh);
 	const shipTex = tex(imgs.ships_atlas);
+	// trim colours for all 8 ships, sampled from their own textures
+	const atlasPx = (() => {
+		const c = document.createElement('canvas');
+		c.width = imgs.ships_atlas.width; c.height = imgs.ships_atlas.height;
+		const x = c.getContext('2d');
+		x.drawImage(imgs.ships_atlas, 0, 0);
+		return x.getImageData(0, 0, c.width, c.height).data;
+	})();
+	const TRIM = M.ships.map((si) => sampleTrim(ships, si, atlasPx, imgs.ships_atlas.width, imgs.ships_atlas.height));
 
 	// ---- track path
 	const nSec = secBytes.byteLength / 24;
@@ -890,7 +1097,7 @@ async function main() {
 	const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
 	const S = {
 		ship: num('ship', 0) | 0,
-		variation: Q.get('var') || 'C1',
+		variation: Q.get('var') || 'H',
 		view: Q.get('view') || 'cockpit',
 		yaw: num('yaw', 0), pitch: num('pitch', 0),
 		eyeF: num('eyef', 0), eyeU: num('eyeu', 0),        // cm, physical
@@ -899,7 +1106,8 @@ async function main() {
 		at: num('at', 0.60), speed: num('speed', 10000),
 		playing: !SHOT && Q.get('play') !== '0',
 		hover: 220,
-		show: { hull: true, cabin: true, struts: true, glass: true, bulkhead: true, hoop: true, dash: true, body: Q.get('body') === '1',
+		show: { hull: true, tub: true, sills: true, seat: true, struts: true, glass: true, bulkhead: true, headrest: true, hoop: true, dash: true,
+			podL: true, podR: true, weaponPod: true, body: Q.get('body') === '1',
 			speedo: true, shield: true, lap: true, position: true, laptime: true, weapon: true },
 		orbit: [num('oyaw', -135), num('opitch', 18), num('odist', 4.2)],
 	};
@@ -947,12 +1155,23 @@ async function main() {
 		while (cockpit.children.length) cockpit.remove(cockpit.children[0]);
 		const shipInfo = M.ships[S.ship];
 		const team = PILOT_TEAM[shipInfo.pilot];
-		const accent = TEAM_ACCENT[team];
+		const trim = TRIM[S.ship];
+		const accent = 'trim_primary';
 		const V = VARIATIONS.find((v) => v.id === S.variation) || VARIATIONS[0];
 		const parts = [];
 		const add = (group, geo, hex, o) => {
-			const mesh = new THREE.Mesh(geo, group === 'glass' ? glassMat : group === 'combiner' ? combinerMat : flat(hex, o));
+			// slot: a material slot name (see SLOTS) or, in the older variations, a colour
+			const slot = typeof hex === 'string' ? hex : null;
+			let mat;
+			if (group === 'glass') mat = glassMat;
+			else if (group === 'combiner') mat = combinerMat;
+			else {
+				const c = slot ? (slot === 'trim_primary' ? trim.primaryHex : slot === 'trim_secondary' ? trim.secondaryHex : SLOTS[slot]) : hex;
+				mat = flat(c, { emissive: (o && o.emissive) ?? SLOT_EMISSIVE[slot] ?? 0 });
+			}
+			const mesh = new THREE.Mesh(geo, mat);
 			mesh.userData.group = group;
+			mesh.userData.slot = group === 'glass' || group === 'combiner' ? 'glass' : (slot || 'authored');
 			if (group === 'glass' || group === 'combiner') mesh.renderOrder = 10;
 			cockpit.add(mesh);
 			parts.push(mesh);
@@ -985,8 +1204,36 @@ async function main() {
 		cockpit.add(hull);
 		// panels and instruments
 		const panels = Object.fromEntries((layout.panels || []).map((p) => [p.id, { ...p, frame: panelFrame(p) }]));
-		const inst = [];
+		const inst = [], faces = [];
+		// face panels: one texture per panel at its planned resolution (x FACE_K here)
+		for (const pnl of Object.values(panels)) {
+			if (!pnl.tex) continue;
+			const { c: pc, n, x, y } = pnl.frame;
+			const cv = document.createElement('canvas');
+			cv.width = pnl.tex[0] * FACE_K; cv.height = pnl.tex[1] * FACE_K;
+			const ct = new THREE.CanvasTexture(cv);
+			ct.anisotropy = 8;
+			const geo = new THREE.PlaneGeometry(pnl.w * REF, pnl.h * REF);
+			geo.applyMatrix4(new THREE.Matrix4().makeBasis(x, y, n).setPosition(pc.clone().addScaledVector(n, 0.003 * REF)));
+			const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: ct, side: THREE.DoubleSide }));
+			mesh.userData.group = pnl.group;
+			mesh.userData.face = pnl.id;
+			cockpit.add(mesh);
+			faces.push({ pnl, canvas: cv, ctx: cv.getContext('2d'), texture: ct, mesh });
+		}
 		for (const it of layout.instruments) {
+			if (it.tx !== undefined) {
+				// an element of a face panel: its rectangle, for the checks
+				const def = INSTRUMENTS[it.id], pnl = panels[it.panel];
+				const { c: pc, n, x, y } = pnl.frame;
+				const texelMm = pnl.w * 1000 / pnl.tex[0];
+				const mm = it.scale * texelMm;
+				const cx = (it.tx + def.w * it.scale / 2) * texelMm - pnl.w * 500, cy = pnl.h * 500 - (it.ty + def.h * it.scale / 2) * texelMm;
+				const wU = def.w * mm / 1000 * REF, hU = def.h * mm / 1000 * REF;
+				const pos = pc.clone().addScaledVector(x, cx / 1000 * REF).addScaledVector(y, cy / 1000 * REF).addScaledVector(n, 0.003 * REF);
+				inst.push({ ...it, def, mm, n, x, y, pos, wU, hU, texelMm });
+				continue;
+			}
 			const def = INSTRUMENTS[it.id];
 			const pnl = panels[it.panel];
 			const { c: pc, n, x, y } = pnl.frame;
@@ -1006,7 +1253,7 @@ async function main() {
 			cockpit.add(mesh);
 			inst.push({ ...it, def, canvas: cv, ctx: cv.getContext('2d'), texture: ct, mesh, n, x, y, pos, wU, hU });
 		}
-		built = { V, layout, parts, hull, inst, accent, team, shipInfo, H, noseF: shipInfo.max[2] / REF * 0.98, removed: hullGeo.userData.removed };
+		built = { V, layout, parts, hull, inst, faces, panels, trim, team, shipInfo, H, box, noseF: shipInfo.max[2] / REF * 0.98, removed: hullGeo.userData.removed };
 		buildBody();
 		applyVisibility();
 		runChecks();
@@ -1053,6 +1300,7 @@ async function main() {
 
 	// ---- per-frame pose
 	const state = { lapTime: 31.4, lap: 2, position: 3, weapon: 2, shield: 0, thrust: 60, speedBars: 10 };
+	FACE_STATE.current = state;
 	function eyeLocal() { return new THREE.Vector3(0, EYE_Y + S.eyeU / 100 * S.ws, -(S.eyeF / 100) * S.ws); }
 
 	function sample(u) {
@@ -1117,7 +1365,12 @@ async function main() {
 	}
 
 	function drawInstruments() {
+		for (const f of built.faces) {
+			composeFace(f.ctx, f.pnl, built.inst, FACE_K, (id) => S.show[id] !== false);
+			f.texture.needsUpdate = true;
+		}
 		for (const it of built.inst) {
+			if (!it.canvas) continue;
 			const ctx = it.ctx;
 			ctx.imageSmoothingEnabled = false;
 			ctx.clearRect(0, 0, it.canvas.width, it.canvas.height);
@@ -1245,7 +1498,10 @@ async function main() {
 			shipSel.appendChild(o);
 		});
 		shipSel.value = S.ship;
-		shipSel.onchange = () => { S.ship = +shipSel.value; build(); };
+		shipSel.onchange = () => { S.ship = +shipSel.value; build(); syncTrim(); };
+		const css = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+		$('trim').innerHTML = M.ships.map((si, i) => `<div class="trow" data-i="${i}"><span class="sw" style="background:${css(TRIM[i].primary)}"></span>` +
+			`<span class="sw" style="background:${css(TRIM[i].secondary)}"></span> ${TEAM_NAME[PILOT_TEAM[si.pilot]]} ${si.name}</div>`).join('');
 		const vs = $('variations');
 		for (const v of VARIATIONS) {
 			const b = document.createElement('button');
@@ -1287,6 +1543,7 @@ async function main() {
 			$('looks').appendChild(b);
 		}
 		syncButtons();
+		syncTrim();
 		// drag = head look (cockpit) or orbit (outside)
 		let drag = null;
 		canvas.addEventListener('pointerdown', (e) => { drag = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); });
@@ -1300,6 +1557,7 @@ async function main() {
 		});
 		canvas.addEventListener('wheel', (e) => { if (S.view === 'outside') S.orbit[2] = THREE.MathUtils.clamp(S.orbit[2] * (e.deltaY > 0 ? 1.1 : 0.9), 1, 40); });
 	}
+	function syncTrim() { for (const r of $('trim').children) r.classList.toggle('on', +r.dataset.i === S.ship); }
 	function syncButtons() { for (const b of $('variations').children) b.classList.toggle('on', b.dataset.v === S.variation); }
 
 	// ---- render
@@ -1351,6 +1609,212 @@ async function main() {
 	let lastCheckUI = 0;
 	function renderChecksLive() { const n = performance.now(); if (n - lastCheckUI > 500) { lastCheckUI = n; renderChecks(); } }
 
+
+	// ---- representative ship per hull shape (the 8 ships are 4 hulls)
+	const SHAPES = [
+		{ id: 'feisar', name: 'Feisar', ship: 0 }, { id: 'qirex', name: 'Qirex', ship: 1 },
+		{ id: 'ag_systems', name: 'AG Systems', ship: 3 }, { id: 'auricom', name: 'Auricom', ship: 5 },
+	];
+	const shapeOf = (shipIndex) => {
+		const si = M.ships[shipIndex];
+		return SHAPES.find((sh) => { const r = M.ships[sh.ship]; return r.count === si.count && r.max[2] === si.max[2] && r.max[0] === si.max[0]; });
+	};
+	const toGame = (a) => { const out = new Array(a.length); for (let i = 0; i < a.length; i += 3) { out[i] = +a[i].toFixed(1); out[i + 1] = +(-a[i + 1]).toFixed(1); out[i + 2] = +(-a[i + 2]).toFixed(1); } return out; };
+	const geoTris = (g) => (g.index ? g.toNonIndexed() : g).attributes.position.array;
+
+	// ---- ?export=geometry: the hybrid's parts per hull shape, in game units
+	function exportGeometry() {
+		const out = { shapes: [], trim: [] };
+		for (const sh of SHAPES) {
+			S.ship = sh.ship; S.variation = 'H';
+			build();
+			const counter = {};
+			const parts = built.parts.map((m) => {
+				const g = m.userData.group;
+				counter[g] = (counter[g] || 0) + 1;
+				return { name: `${g}.${counter[g]}`, group: g, slot: m.userData.slot, tris: toGame(geoTris(m.geometry)) };
+			});
+			const faces = built.layout.panels.map((pnl) => {
+				const f = built.panels[pnl.id].frame;
+				const corner = (sx, sy) => f.c.clone().addScaledVector(f.x, sx * pnl.w / 2 * REF).addScaledVector(f.y, sy * pnl.h / 2 * REF).addScaledVector(f.n, 0.003 * REF).toArray();
+				return {
+					id: pnl.id, group: pnl.group, texture: pnl.tex, texel_mm: +(pnl.w * 1000 / pnl.tex[0]).toFixed(4),
+					// corners: top-left, top-right, bottom-right, bottom-left (texture u right, v down)
+					corners: toGame([...corner(-1, 1), ...corner(1, 1), ...corner(1, -1), ...corner(-1, -1)]),
+					elements: built.layout.instruments.filter((it) => it.panel === pnl.id).map((it) => ({
+						id: it.id, x: it.tx, y: it.ty, ui_scale: it.scale, size: [INSTRUMENTS[it.id].w * it.scale, INSTRUMENTS[it.id].h * it.scale],
+					})),
+				};
+			});
+			out.shapes.push({ id: sh.id, name: sh.name, models: M.ships.map((si, i) => [si, i]).filter(([, i]) => shapeOf(i) === sh).map(([si, i]) => ({ index: i, name: si.name, tris: si.count, bbox: [si.min, si.max] })), parts, faces });
+		}
+		for (let i = 0; i < M.ships.length; i++) out.trim.push({ ship: i, name: M.ships[i].name, shape: shapeOf(i).id, ...TRIM[i] });
+		const c = CABIN;
+		out.cabin_cut = { x: [-(c.halfWidth + 0.005) * REF, (c.halfWidth + 0.005) * REF], y_max: -(EYE_Y + (c.floor + 0.01) * REF), z: [c.rear * REF, c.front * REF] };
+		out.trim_rule = TRIM_RULE;
+		out.instruments = Object.fromEntries(Object.entries(INSTRUMENTS).map(([k, v]) => [k, { label: v.label, size_hud_px: [v.w, v.h], min_text_hud_px: v.minText }]));
+		document.getElementById('export').textContent = JSON.stringify(out);
+		document.title = 'READY';
+	}
+
+	// ---- ?sheet=assets: every component on its own, per-hull variants, trim, faces
+	async function assetSheet() {
+		document.body.classList.add('shot');
+		pose();  // fills the instrument state the faces show
+		const W = 2400, TW = 380, TH = 300;
+		const sheet = document.createElement('canvas');
+		sheet.width = W; sheet.height = 4200;
+		sheet.style.cssText = 'position:absolute;left:0;top:0;z-index:5';
+		document.body.appendChild(sheet);
+		const ctx = sheet.getContext('2d');
+		ctx.fillStyle = '#0d0f12'; ctx.fillRect(0, 0, W, sheet.height);
+		const text = (str, x, y, size = 15, color = '#cfd6df', weight = '') => { ctx.font = `${weight} ${size}px Helvetica, Arial, sans-serif`; ctx.fillStyle = color; ctx.fillText(str, x, y); };
+		const heading = (str, y) => { text(str, 20, y, 22, '#f0c840', 'bold'); return y + 14; };
+		renderer.setPixelRatio(1);
+		renderer.setSize(TW, TH, false);
+		const tileScene = new THREE.Scene();
+		const tileCam = new THREE.PerspectiveCamera(26, TW / TH, 1, 5000);
+		const renderTile = (meshes, dir, x, y, w = TW, h = TH) => {
+			renderer.setSize(w, h, false);
+			while (tileScene.children.length) tileScene.remove(tileScene.children[0]);
+			const bb = new THREE.Box3();
+			for (const m of meshes) { const c = new THREE.Mesh(m.geometry, m.material); c.renderOrder = m.renderOrder; tileScene.add(c); bb.expandByObject(c); }
+			const sph = bb.getBoundingSphere(new THREE.Sphere());
+			tileCam.aspect = w / h; tileCam.updateProjectionMatrix();
+			const d = sph.radius / Math.sin(deg(tileCam.fov / 2)) * 1.02;
+			tileCam.position.copy(sph.center).addScaledVector(dir.clone().normalize(), d);
+			tileCam.lookAt(sph.center);
+			renderer.setViewport(0, 0, w, h); renderer.setScissorTest(false);
+			renderer.setClearColor(0x22262c, 1); renderer.clear();
+			renderer.render(tileScene, tileCam);
+			ctx.drawImage(renderer.domElement, 0, 0, w, h, x, y, w, h);
+			return bb;
+		};
+		const dims = (bb) => {
+			const s3 = bb.getSize(new THREE.Vector3());
+			return `${(s3.x / REF).toFixed(2)} W x ${(s3.y / REF).toFixed(2)} H x ${(s3.z / REF).toFixed(2)} L m  (${s3.x.toFixed(0)} x ${s3.y.toFixed(0)} x ${s3.z.toFixed(0)} u)`;
+		};
+		const groupMeshes = (g) => [...built.parts.filter((m) => g.includes(m.userData.group)), ...built.faces.filter((f) => g.includes(f.pnl.group)).map((f) => f.mesh)];
+		const triCount = (ms) => ms.reduce((a, m) => a + geoTris(m.geometry).length / 9, 0);
+		const sig = (ms) => ms.map((m) => Array.from(geoTris(m.geometry)).map((v) => Math.round(v * 2)).join(',')).join('|');
+
+		// per-shape signatures, to mark what varies per hull
+		const COMPONENTS = [
+			{ g: ['struts'], name: 'Frame struts', note: 'A-pillars, header, top rails; 2.4 cm', dir: [-1, 0.7, -1.3] },
+			{ g: ['glass'], name: 'Canopy glass', note: 'windscreen, sides, top; tint 4.5% + fresnel', dir: [-1, 0.7, -1.3] },
+			{ g: ['sills'], name: 'Sills and coaming', note: 'canopy sill rails, coaming rim, trim stripe', dir: [-1, 1.2, -0.8] },
+			{ g: ['tub'], name: 'Tub', note: 'walls floor-to-hull-deck, floor', dir: [-1, 1.2, -0.8] },
+			{ g: ['seat'], name: 'Seat', note: 'cushion, reclined back', dir: [-1, 0.6, -1] },
+			{ g: ['bulkhead'], name: 'Rear bulkhead', note: 'at 0.40 m behind the eye, trim cap', dir: [-0.8, 0.5, -1.2] },
+			{ g: ['headrest'], name: 'Headrest', note: 'tower to +0.10 m, pad', dir: [-0.8, 0.4, -1.2] },
+			{ g: ['hoop'], name: 'Roll hoop', note: 'posts to the strut tips, crossbar; 3 cm', dir: [-1, 0.5, 1] },
+			{ g: ['dash'], name: 'Dash shell', note: 'full width, low centre, on the deck', dir: [-0.6, 0.9, 1.4] },
+			{ g: ['podL'], name: 'Left pod', note: 'bezel, lip with trim edge, face', dir: [0.35, 0.35, 1.2] },
+			{ g: ['podR'], name: 'Right pod', note: 'bezel, lip with trim edge, face', dir: [-0.35, 0.35, 1.2] },
+			{ g: ['weaponPod'], name: 'Weapon display', note: 'keystone on the dash centre, trim surround', dir: [-0.3, 0.3, 1.2] },
+		];
+		const sigs = {};
+		for (const sh of SHAPES) {
+			S.ship = sh.ship; S.variation = 'H'; build(); drawInstruments();
+			for (const c of COMPONENTS) (sigs[c.name] = sigs[c.name] || []).push(sig(groupMeshes(c.g)));
+		}
+		S.ship = 0; build(); drawInstruments();
+		const varies = (c) => new Set(sigs[c.name]).size > 1;
+
+		let y = 36;
+		text('WipEout VR, cockpit H (slim frame, split dash): asset sheet for approval', 20, y, 26, '#f0c840', 'bold'); y += 26;
+		text('Ship space, metres at world_scale 128 (game units in brackets). Reference hull: Feisar. Colours are material slots; trim is sampled per ship at runtime. Mockup only, nothing is built.', 20, y, 15, '#9aa3ad'); y += 30;
+		y = heading('Components', y);
+		const cols = 6, gap = 10;
+		COMPONENTS.forEach((c, i) => {
+			const x = 20 + (i % cols) * (TW + gap), ty = y + Math.floor(i / cols) * (TH + 92);
+			const ms = groupMeshes(c.g);
+			const bb = renderTile(ms, new THREE.Vector3(...c.dir), x, ty);
+			text(c.name, x, ty + TH + 20, 16, '#f0c840', 'bold');
+			text(dims(bb), x, ty + TH + 40, 12.5);
+			const slots = [...new Set(ms.map((m) => m.userData.slot || 'face'))].join(', ');
+			text(`${triCount(ms)} tris; slots: ${slots}`, x, ty + TH + 57, 12.5, '#9aa3ad');
+			text(`${c.note}${varies(c) ? '; varies per hull' : '; same on all hulls'}`, x, ty + TH + 74, 12.5, varies(c) ? '#ffb070' : '#9aa3ad');
+		});
+		y += 2 * (TH + 92) + 20;
+
+		// per-hull variants
+		y = heading('Per-hull variants (the parts that follow the deck)', y);
+		const VAR = COMPONENTS.filter(varies);
+		const sw = 280, shh = 200;
+		for (const sh of SHAPES) { S.ship = sh.ship; build(); drawInstruments(); sh.meshes = {}; for (const c of VAR) sh.meshes[c.name] = groupMeshes(c.g); }
+		VAR.forEach((c, r) => {
+			const ty = y + r * (shh + 46);
+			text(c.name, 20, ty + 20, 16, '#f0c840', 'bold');
+			SHAPES.forEach((sh, k) => {
+				const x = 230 + k * (sw + 140);
+				const bb = renderTile(sh.meshes[c.name], new THREE.Vector3(...c.dir), x, ty, sw, shh);
+				text(sh.name, x, ty + shh + 18, 13.5, '#cfd6df', 'bold');
+				text(dims(bb).split('  ')[0], x, ty + shh + 34, 12);
+			});
+		});
+		y += VAR.length * (shh + 46) + 24;
+		S.ship = 0; build(); drawInstruments();
+
+		// trim
+		y = heading('Trim, sampled from each ship\'s own textures (primary, secondary)', y);
+		text('Rule: area-weighted texel x vertex colour x 2 samples (6 per triangle); keep saturation >= 0.35, value >= 0.20; 24 hue bins, smoothed;', 20, y + 8, 13.5, '#9aa3ad');
+		text('primary = mean colour around the peak bin; secondary = strongest bin >= 45° away with >= 15% weight; both to value 0.70-0.95 (no secondary: primary at 55%; under 0.5% saturated area: neutral silver).', 20, y + 26, 13.5, '#9aa3ad');
+		y += 44;
+		const hullMeshFor = (i) => { S.ship = i; build(); return [built.hull]; };
+		for (let i = 0; i < M.ships.length; i++) {
+			const x = 20 + (i % 4) * 590, ty = y + Math.floor(i / 4) * 250;
+			renderTile(hullMeshFor(i), new THREE.Vector3(-1, 0.8, -1.2), x, ty, 300, 200);
+			const t = TRIM[i], si = M.ships[i];
+			const hx = (c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
+			text(`${TEAM_NAME[PILOT_TEAM[si.pilot]]}: ${PILOT_NAME[si.pilot]} (${si.name})`, x + 310, ty + 22, 14, '#f0c840', 'bold');
+			ctx.fillStyle = hx(t.primary); ctx.fillRect(x + 310, ty + 36, 110, 60);
+			ctx.fillStyle = hx(t.secondary); ctx.fillRect(x + 430, ty + 36, 110, 60);
+			text(`primary ${hx(t.primary)}`, x + 310, ty + 116, 12.5); text(`hue ${t.primaryHue.toFixed(0)}°`, x + 310, ty + 132, 12.5, '#9aa3ad');
+			text(`secondary ${hx(t.secondary)}`, x + 430, ty + 116, 12.5); text(t.neutral ? 'neutral' : t.secondaryHue === null ? 'fallback: primary at 55%' : `hue ${t.secondaryHue.toFixed(0)}°`, x + 430, ty + 132, 12.5, '#9aa3ad');
+			text(`saturated area ${(t.saturatedShare * 100).toFixed(0)}%`, x + 310, ty + 152, 12.5, '#9aa3ad');
+		}
+		y += 2 * 250 + 20;
+		S.ship = 0; build(); drawInstruments();
+
+		// faces at planned resolution
+		y = heading('Instrument faces at planned texture resolution (1 texel = 0.547 mm; about 20 texels per degree at the pods, the Frame shows about 16 px per degree)', y);
+		y += 10;
+		let x = 20;
+		const faceInfo = {
+			left: ['LAP n OF 3: "LAP", "OF" UI_SIZE_8 accent; digits UI_SIZE_16 (drfonts.cmp), ui_scale 2', 'POSITION n: UI_SIZE_8 accent + UI_SIZE_16, ui_scale 2', 'lap time UI_SIZE_16; LAP RECORD + time UI_SIZE_8, ui_scale 2'],
+			right: ['speed + thrust: hud.c speedo bars + speedo.tim facia, ui_scale 3', 'status slot (generic): now the shield timer,', '"SHIELD" UI_SIZE_8 + 8 segments, ui_scale 3'],
+			weapon: ['current weapon: wicons.cmp icon (32 px),', 'framed, ui_scale 3; empty frame when none'],
+		};
+		for (const f of built.faces) {
+			const [tw, th] = f.pnl.tex;
+			const c = document.createElement('canvas'); c.width = tw; c.height = th;
+			composeFace(c.getContext('2d'), f.pnl, built.inst, 1, () => true);
+			ctx.imageSmoothingEnabled = false;
+			ctx.drawImage(c, x, y);
+			ctx.strokeStyle = '#3a404a'; ctx.strokeRect(x - 0.5, y - 0.5, tw + 1, th + 1);
+			text(`${f.pnl.id} face: ${tw} x ${th} texels, ${(f.pnl.w).toFixed(2)} x ${(f.pnl.h).toFixed(2)} m`, x, y + th + 22, 14, '#f0c840', 'bold');
+			faceInfo[f.pnl.id].forEach((l, k) => text(l, x, y + th + 42 + k * 17, 12.5));
+			// 2x inset
+			x += tw + 40;
+		}
+		y += 292 + 110;
+		text('Element rectangles (texels): ' + built.inst.filter((i) => i.tx !== undefined).map((i) => `${i.id} ${i.panel} @${i.tx},${i.ty} x${i.scale}`).join('; '), 20, y, 12.5, '#9aa3ad');
+		y += 30;
+		const final = document.createElement('canvas'); final.width = W; final.height = y;
+		final.getContext('2d').drawImage(sheet, 0, 0);
+		sheet.remove();
+		const img = document.createElement('img');
+		img.src = final.toDataURL('image/png');
+		img.style.cssText = 'position:absolute;left:0;top:0;z-index:5';
+		document.body.appendChild(img);
+		await new Promise((r) => { img.onload = r; });
+		document.getElementById('checks').dataset.sheetHeight = y;
+		document.title = 'READY';
+	}
+
+	if (Q.get('export') === 'geometry') { exportGeometry(); return; }
+	if (Q.get('sheet') === 'assets') { buildUI(); await assetSheet(); return; }
 	window.addEventListener('resize', resize);
 	buildUI();
 	build();

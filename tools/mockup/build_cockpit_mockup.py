@@ -84,11 +84,16 @@ table{border-collapse:collapse;width:100%;font-size:10.5px}td,th{padding:1px 3px
 td.bad{color:#ff7060}
 body.shot #panel{display:none}
 #checks{display:none}
+#trim .trow{font-size:10.5px;color:#9aa3ad;margin:1px 0}#trim .trow.on{color:#f0c840}
+#trim .sw{display:inline-block;width:14px;height:10px;margin-right:2px;vertical-align:middle;border:1px solid #000}
+#panel a{color:#7fb8ff}
 """
 
 PANEL = """
 <div id="panel">
   <h3>Ship</h3><select id="ship"></select>
+  <div class="small">Trim, sampled from each ship's textures (primary, secondary):</div><div id="trim"></div>
+  <div class="small"><a href="cockpit-assets.png" target="_blank">Asset sheet (cockpit-assets.png)</a> &middot; <a href="cockpit-hybrid-sheet.png" target="_blank">hybrid screenshots</a></div>
   <h3>Variation</h3><div id="variations"></div>
   <h3>View</h3>
   <select id="viewsel"><option value="cockpit">cockpit (Frame per-eye FOV, mono)</option><option value="outside">outside (cabin in ship)</option></select>
@@ -131,7 +136,7 @@ def main():
 <style>{CSS}</style></head>
 <body>
 <div id="wrap"><div id="stage"><canvas id="view"></canvas><div id="caption"></div><div id="blurb"></div></div>{PANEL}</div>
-<pre id="checks"></pre>
+<pre id="checks"></pre><pre id="export" style="display:none"></pre>
 <script>if (new URLSearchParams(location.search).get('shot') === '1') document.body.classList.add('shot');</script>
 <script>{three_js()}</script>
 <script>window.MOCKUP = {json.dumps(payload, separators=(',', ':'))};</script>
