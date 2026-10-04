@@ -12,3 +12,5 @@
 /save.dat
 .DS_Store
 gamecontrollerdb.txt
+
+__pycache__/
