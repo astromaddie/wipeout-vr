@@ -34,6 +34,7 @@ _Static_assert(offsetof(vr_vertex_t, color) == offsetof(vertex_t, color), "vr_ve
 #define VR_PASSES_MAX 4 // eye, eye, HUD over black, HUD over white; mono uses one
 #define VR_DUMP_SLOTS 4 // eye0, eye1, hud, panel
 #define VR_CHECKED_MAX 64
+#define VR_FACE_MAX 4 // instrument face textures (the cockpit has 3)
 
 static mat4_t render_setup_2d_projection_mat(vec2i_t size);
 static mat4_t render_setup_3d_projection_mat(vec2i_t size);
@@ -59,7 +60,11 @@ static struct {
 	bool views_ok; // and the eye poses are valid, so it can be stereo
 	bool stereo;
 	bool in_2d;
+	int in_face; // the face being recorded (render_vr_face_begin), -1 for none
 	bool sky;
+	bool cockpit_anchor; // the eyes anchor at cockpit_pos/cockpit_angles instead of the game camera
+	float cockpit_pos[3];
+	float cockpit_angles[3];
 	const vr_frame_t *frame;
 	vr_view_t views[2]; // the frame's views after diag_yaw: what is rendered and submitted
 	vr_pose_t head;
@@ -80,6 +85,9 @@ static struct {
 	GLuint hud_tex[2]; // over black, over white
 	uint32_t hud_tex_w, hud_tex_h;
 	GLuint resolve_program, resolve_vao;
+	GLuint face_tex[VR_FACE_MAX]; // the instrument faces: drawn once per frame, sampled by both eyes
+	uint32_t face_w[VR_FACE_MAX], face_h[VR_FACE_MAX];
+	uint32_t face_passes_this_frame;
 	uint32_t checked_images[VR_CHECKED_MAX];
 	int checked_count;
 	vr_vertex_t *sprite_scratch;
@@ -113,6 +121,9 @@ static uint64_t vr_clock_ns(void) {
 #define VR_TIME_END() do { if (vr_t0) { vrr.rec_ns += vr_clock_ns() - vr_t0; } } while (0)
 
 static uint8_t vr_seg_flags(void) {
+	if (vrr.in_face >= 0) {
+		return VR_CMD_FLAG_FACE;
+	}
 	return vrr.in_2d ? VR_CMD_FLAG_2D : 0;
 }
 
@@ -126,6 +137,18 @@ const vr_render_timing_t *vr_render_timing(void) {
 
 const vr_render_frame_info_t *vr_render_frame_info(void) {
 	return &vrr.info;
+}
+
+bool vr_render_view(int index, vr_camset_t *out) {
+	if (index < 0 || (uint32_t)index >= vrr.list.cam_len) {
+		return false;
+	}
+	*out = vrr.list.cams[index];
+	return true;
+}
+
+uint32_t vr_render_face_texture(int face) {
+	return face >= 0 && face < VR_FACE_MAX ? vrr.face_tex[face] : 0;
 }
 
 void vr_render_request_recentre(void) {
@@ -329,6 +352,10 @@ static bool vr_begin_frame(void) {
 	}
 
 	bool renders = false;
+	if (vrr.cfg.live_settings) {
+		// the cockpit keys are live: a settings page changes them between frames
+		vr_cockpit_settings_from(&vrr.cfg.settings.cockpit, vrr.cfg.live_settings);
+	}
 	vrr.frame = vrr.cfg.provider.frame(vrr.cfg.provider.user, &renders);
 	vrr.renders = renders && vrr.frame;
 	vrr.views_ok = vrr.renders && vrr.frame->views_valid;
@@ -336,7 +363,9 @@ static bool vr_begin_frame(void) {
 	vrr.recording = true;
 	vrr.stereo = false;
 	vrr.in_2d = false;
+	vrr.in_face = -1;
 	vrr.sky = false;
+	vrr.cockpit_anchor = false;
 	vrr.cur_cam = -1;
 	vrr.rec_ns = 0;
 	vrr.draw_calls = 0;
@@ -383,13 +412,23 @@ static void vr_rec_view(vec3_t pos, vec3_t angles) {
 	if (vrr.stereo) {
 		const vr_render_settings_t *st = &vrr.cfg.settings;
 		vr_game_camera_t gc = { .position = {pos.x, pos.y, pos.z}, .angles = {angles.x, angles.y, angles.z} };
+		vr_rig_t rig = st->rig;
+		if (vrr.cockpit_anchor) {
+			// The cockpit view: the head sits at the fitted eye, turned the way the bank mode
+			// says. The angles are already what the anchor takes, roll included or not, so
+			// the camera's own rules (follow_vehicle_rotation, horizon_lock) do not apply.
+			memcpy(gc.position, vrr.cockpit_pos, sizeof(gc.position));
+			memcpy(gc.angles, vrr.cockpit_angles, sizeof(gc.angles));
+			rig.follow_roll = true;
+			rig.horizon_lock = false;
+		}
 		for (int e = 0; e < 2; e++) {
-			vr_cam_from_pose(&gc, &st->rig, &vrr.stage.recentre, &vrr.head, &vrr.views[e].pose, &cs.eye[e]);
+			vr_cam_from_pose(&gc, &rig, &vrr.stage.recentre, &vrr.head, &vrr.views[e].pose, &cs.eye[e]);
 		}
 		// The head centre without its roll: the HUD quad's own point of view
 		vr_pose_t level;
 		vr_pose_level(&vrr.head, &level);
-		vr_cam_from_pose(&gc, &st->rig, &vrr.stage.recentre, &vrr.head, &level, &cs.hud);
+		vr_cam_from_pose(&gc, &rig, &vrr.stage.recentre, &vrr.head, &level, &cs.hud);
 		cs.stereo = true;
 	}
 
@@ -490,6 +529,93 @@ bool render_vr_wide_cull(void) {
 // The sky object follows the camera, so each eye re-translates it to itself.
 void render_vr_sky(bool on) {
 	vrr.sky = on;
+}
+
+// -----------------------------------------------------------------------------
+// The cockpit (src/vr/vr_cockpit.c)
+
+bool render_vr_stereo(void) {
+	return vrr.recording && vrr.stereo;
+}
+
+const struct vr_cockpit_settings *render_vr_cockpit_settings(void) {
+	return &vrr.cfg.settings.cockpit;
+}
+
+// The race view's eyes anchor here instead of at the game camera: `pos` is the
+// head's seat in world space, `angles` the camera-style (pitch, yaw, roll) the
+// anchor turns by. Valid for the rest of this frame; call before render_set_view.
+void render_vr_cockpit_anchor(vec3_t pos, vec3_t angles) {
+	if (!vrr.recording) {
+		return;
+	}
+	vrr.cockpit_anchor = true;
+	vrr.cockpit_pos[0] = pos.x;
+	vrr.cockpit_pos[1] = pos.y;
+	vrr.cockpit_pos[2] = pos.z;
+	vrr.cockpit_angles[0] = angles.x;
+	vrr.cockpit_angles[1] = angles.y;
+	vrr.cockpit_angles[2] = angles.z;
+}
+
+// The 2D draws between face_begin and face_end go into the face's own texture
+// (width x height texels, cleared to `clear`), once per frame, before the eyes.
+// The positions are texels, y down, as the game's 2D is.
+void render_vr_face_begin(int face, int width, int height, rgba_t clear) {
+	if (!vrr.recording || face < 0 || face >= VR_FACE_MAX) {
+		return;
+	}
+	vr_cmd_t *c = vr_cmdlist_push(&vrr.list, VR_CMD_FACE_BEGIN, 0);
+	c->u.face.id = face;
+	c->u.face.width = width;
+	c->u.face.height = height;
+	c->u.face.clear[0] = clear.r;
+	c->u.face.clear[1] = clear.g;
+	c->u.face.clear[2] = clear.b;
+	c->u.face.clear[3] = clear.a;
+	vrr.in_face = face;
+}
+
+void render_vr_face_end(void) {
+	if (!vrr.recording || vrr.in_face < 0) {
+		return;
+	}
+	vr_cmd_t *c = vr_cmdlist_push(&vrr.list, VR_CMD_FACE_END, 0);
+	c->u.face.id = vrr.in_face;
+	vrr.in_face = -1;
+}
+
+// A quad in the 3D segment showing the face: corners top-left, top-right,
+// bottom-right, bottom-left, in the current model space. The face texture is
+// upside down in GL (its top row is the top of the 2D layout), which the uvs undo.
+void render_vr_face_quad(int face, const vec3_t corners[4], rgba_t color) {
+	if (!vrr.recording || face < 0 || face >= VR_FACE_MAX) {
+		return;
+	}
+	VR_TIME_BEGIN();
+	const float atlas = 2048.0f; // the vertex shader divides uv by this
+	const float uv[4][2] = {{0, atlas}, {atlas, atlas}, {atlas, 0}, {0, 0}};
+	vr_vertex_t v[4];
+	for (int i = 0; i < 4; i++) {
+		v[i].pos[0] = corners[i].x;
+		v[i].pos[1] = corners[i].y;
+		v[i].pos[2] = corners[i].z;
+		v[i].uv[0] = uv[i][0];
+		v[i].uv[1] = uv[i][1];
+		v[i].color[0] = color.r;
+		v[i].color[1] = color.g;
+		v[i].color[2] = color.b;
+		v[i].color[3] = color.a;
+	}
+	vr_cmd_t *c = vr_cmdlist_push(&vrr.list, VR_CMD_BIND_FACE, 0);
+	c->u.face.id = face;
+	const vr_vertex_t t0[3] = {v[0], v[1], v[3]};
+	const vr_vertex_t t1[3] = {v[3], v[1], v[2]};
+	vr_cmdlist_push_tris(&vrr.list, t0, 0);
+	vr_cmdlist_push_tris(&vrr.list, t1, 0);
+	c = vr_cmdlist_push(&vrr.list, VR_CMD_BIND_FACE, 0);
+	c->u.face.id = -1;
+	VR_TIME_END();
 }
 
 
@@ -597,7 +723,8 @@ static void vr_check_target(GLuint image) {
 typedef enum {
 	VR_PASS_EYE,
 	VR_PASS_HUD,
-	VR_PASS_MONO
+	VR_PASS_MONO,
+	VR_PASS_FACE // every instrument face of the frame, each into its own texture
 } vr_pass_kind_t;
 
 typedef struct {
@@ -607,8 +734,36 @@ typedef struct {
 	uint32_t width, height;
 	GLuint depth; // 0 for none
 	float clear[4];
-	uint8_t segments; // bit 0: the 3D segment, bit 1: the 2D segment
+	uint8_t segments; // bit 0: the 3D segment, bit 1: the 2D segment, bit 2: the faces
 } vr_pass_t;
+
+static uint8_t vr_cmd_segment(const vr_cmd_t *c) {
+	if (c->flags & VR_CMD_FLAG_FACE) {
+		return 4;
+	}
+	return (c->flags & VR_CMD_FLAG_2D) ? 2 : 1;
+}
+
+// The texture of a face, made or resized when a FACE_BEGIN names a size
+static void vr_face_ensure(int id, uint32_t w, uint32_t h) {
+	if (!vrr.face_tex[id]) {
+		glGenTextures(1, &vrr.face_tex[id]);
+	}
+	if (vrr.face_w[id] == w && vrr.face_h[id] == h) {
+		return;
+	}
+	glBindTexture(GL_TEXTURE_2D, vrr.face_tex[id]);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	#ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 8.0f); // foreshortened pods; a driver may clamp or ignore it
+	#endif
+	vrr.face_w[id] = w;
+	vrr.face_h[id] = h;
+}
 
 static void vr_expand_sprite(const vr_cmd_t *c, const float sprite[9], vr_vertex_t out[6]) {
 	// render_push_sprite(), with the sprite matrix of the camera being drawn from
@@ -656,14 +811,21 @@ static void vr_pass_cam(const vr_pass_t *p, const vr_camset_t *cs, const vr_cam_
 static void vr_pass(const vr_pass_t *p) {
 	vr_cmdlist_t *l = &vrr.list;
 	const uint32_t arena_tris = l->vert_len / 3;
-	const uint32_t pass_index = vrr.passes_this_frame++;
+	const bool face_pass = p->kind == VR_PASS_FACE;
+	// the face pass draws no sprites, so it takes no sprite region
+	const uint32_t pass_index = face_pass ? 0 : vrr.passes_this_frame++;
 
-	// Target
+	// Target (the face pass binds one per face, at each FACE_BEGIN)
 	glBindFramebuffer(GL_FRAMEBUFFER, vrr.fbo);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, p->image, 0);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, p->depth);
-	vr_check_target(p->image);
-	glViewport(0, 0, p->width, p->height);
+	if (!face_pass) {
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, p->image, 0);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, p->depth);
+		vr_check_target(p->image);
+		glViewport(0, 0, p->width, p->height);
+	}
+	else {
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+	}
 
 	// The state a pass starts in, set in full: nothing is inherited
 	glDisable(GL_FRAMEBUFFER_SRGB); // the game's colours are gamma-encoded already (lesson 8)
@@ -690,8 +852,10 @@ static void vr_pass(const vr_pass_t *p) {
 	}
 	glUniform2f(prg_game->uniform.screen, 0, 0);
 	glUniformMatrix4fv(prg_game->uniform.model, 1, false, mat4_identity().m);
-	glClearColor(p->clear[0], p->clear[1], p->clear[2], p->clear[3]);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	if (!face_pass) {
+		glClearColor(p->clear[0], p->clear[1], p->clear[2], p->clear[3]);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
 
 	// Sprites for this pass, each facing the camera it is drawn from
 	const bool need_sprites = l->sprite_count > 0;
@@ -709,7 +873,7 @@ static void vr_pass(const vr_pass_t *p) {
 				cs = &l->cams[c->u.cam];
 			}
 			else if (c->type == VR_CMD_SPRITE) {
-				uint8_t seg = (c->flags & VR_CMD_FLAG_2D) ? 2 : 1;
+				uint8_t seg = vr_cmd_segment(c);
 				if (!(p->segments & seg)) {
 					continue;
 				}
@@ -761,13 +925,13 @@ static void vr_pass(const vr_pass_t *p) {
 		const vr_cmd_t *c = &l->cmds[i];
 		switch ((vr_cmd_type_t)c->type) {
 			case VR_CMD_TRIS:
-				if (p->segments & ((c->flags & VR_CMD_FLAG_2D) ? 2 : 1)) {
+				if (p->segments & vr_cmd_segment(c)) {
 					VR_ADD_DRAW(c->u.tris.first, c->u.tris.count);
 				}
 				break;
 
 			case VR_CMD_SPRITE:
-				if (p->segments & ((c->flags & VR_CMD_FLAG_2D) ? 2 : 1)) {
+				if (p->segments & vr_cmd_segment(c)) {
 					uint32_t first = arena_tris + pass_index * l->sprite_count * 2 + sprite_n * 2;
 					sprite_n++;
 					VR_ADD_DRAW(first, 2);
@@ -862,6 +1026,50 @@ static void vr_pass(const vr_pass_t *p) {
 				}
 				break;
 
+			case VR_CMD_FACE_BEGIN:
+				VR_FLUSH_DRAW();
+				if (face_pass) {
+					const int id = c->u.face.id;
+					vr_face_ensure(id, (uint32_t)c->u.face.width, (uint32_t)c->u.face.height);
+					glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vrr.face_tex[id], 0);
+					vr_check_target(vrr.face_tex[id]);
+					glViewport(0, 0, vrr.face_w[id], vrr.face_h[id]);
+					// the face is a small 2D layout of its own: top-left origin, texels, no depth
+					glDisable(GL_DEPTH_TEST);
+					glDepthMask(false);
+					glDisable(GL_CULL_FACE);
+					glDisable(GL_POLYGON_OFFSET_FILL);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+					glUniformMatrix4fv(prg_game->uniform.model, 1, false, mat4_identity().m);
+					glUniformMatrix4fv(prg_game->uniform.view, 1, false, mat4_identity().m);
+					mat4_t face_proj = render_setup_2d_projection_mat(vec2i((int)vrr.face_w[id], (int)vrr.face_h[id]));
+					glUniformMatrix4fv(prg_game->uniform.projection, 1, false, face_proj.m);
+					glUniform3f(prg_game->uniform.camera_pos, 0, 0, 0);
+					glUniform2f(prg_game->uniform.screen, 0, 0);
+					glClearColor(c->u.face.clear[0] / 255.0f, c->u.face.clear[1] / 255.0f, c->u.face.clear[2] / 255.0f, c->u.face.clear[3] / 255.0f);
+					glClear(GL_COLOR_BUFFER_BIT);
+					vrr.face_passes_this_frame++;
+				}
+				break;
+
+			case VR_CMD_FACE_END:
+				VR_FLUSH_DRAW();
+				if (face_pass) {
+					// mipmaps, so the pods hold up at an angle and a distance
+					glBindTexture(GL_TEXTURE_2D, vrr.face_tex[c->u.face.id]);
+					glGenerateMipmap(GL_TEXTURE_2D);
+					glBindTexture(GL_TEXTURE_2D, atlas_texture);
+				}
+				break;
+
+			case VR_CMD_BIND_FACE:
+				VR_FLUSH_DRAW();
+				if (!face_pass) {
+					int id = c->u.face.id;
+					glBindTexture(GL_TEXTURE_2D, id >= 0 && id < VR_FACE_MAX && vrr.face_tex[id] ? vrr.face_tex[id] : atlas_texture);
+				}
+				break;
+
 			case VR_CMD_SCREEN_POS:
 				VR_FLUSH_DRAW();
 				// Screen shake is ignored in the eyes and the HUD; the mono panel keeps
@@ -878,6 +1086,14 @@ static void vr_pass(const vr_pass_t *p) {
 	#undef VR_FLUSH_DRAW
 
 	vrr.draw_calls += draws;
+}
+
+// Every face once per frame, before the eyes: both eyes then sample the same
+// texels, and the game's 2D code ran once (lesson 4).
+static void vr_replay_faces(void) {
+	vrr.face_passes_this_frame = 0;
+	vr_pass_t pass = { .kind = VR_PASS_FACE, .segments = 4 };
+	vr_pass(&pass);
 }
 
 static void vr_replay_eyes(vr_layers_t *layers) {
@@ -1016,7 +1232,11 @@ static void vr_end_frame(void) {
 		vr_mkdirs(vrr.dump_dir);
 	}
 
+	vrr.face_passes_this_frame = 0;
 	if (vrr.stereo) {
+		if (vrr.list.face_begins) {
+			vr_replay_faces();
+		}
 		vr_replay_eyes(&layers);
 		vr_replay_hud(&layers);
 	}
@@ -1034,6 +1254,7 @@ static void vr_end_frame(void) {
 	vrr.info.triangles = vrr.list.vert_len / 3;
 	vrr.info.sprites = vrr.list.sprite_count;
 	vrr.info.draw_calls = vrr.draw_calls;
+	vrr.info.face_passes = vrr.face_passes_this_frame;
 	vrr.info.fade_alpha = layers.fade_alpha;
 	running_stats.num_tris = vrr.info.triangles;
 	running_stats.num_draw_calls = vrr.draw_calls;

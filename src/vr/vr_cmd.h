@@ -38,12 +38,16 @@ typedef enum {
 	VR_CMD_CULL,
 	VR_CMD_SCREEN_POS,
 	VR_CMD_TRIS, // an index range into the triangle arena, atlas UVs already applied
-	VR_CMD_SPRITE // a billboard, expanded at replay facing the replay's camera
+	VR_CMD_SPRITE, // a billboard, expanded at replay facing the replay's camera
+	VR_CMD_FACE_BEGIN, // the draws up to FACE_END (flagged VR_CMD_FLAG_FACE) go into an instrument face's own texture
+	VR_CMD_FACE_END,
+	VR_CMD_BIND_FACE // the texture the following 3D triangles sample: a face, or the atlas (-1)
 } vr_cmd_type_t;
 
 enum {
 	VR_CMD_FLAG_2D = 1, // the command was recorded after render_set_view_2d (the HUD segment)
-	VR_CMD_FLAG_SKY = 2 // MODEL_MAT of the sky: re-translated to each eye
+	VR_CMD_FLAG_SKY = 2, // MODEL_MAT of the sky: re-translated to each eye
+	VR_CMD_FLAG_FACE = 4 // the command was recorded inside a face: drawn once per frame into the face texture
 };
 
 typedef struct {
@@ -66,6 +70,11 @@ typedef struct {
 			uint8_t color[4];
 			uint16_t texture;
 		} sprite;
+		struct {
+			int32_t id; // BIND_FACE: -1 for the atlas
+			int32_t width, height; // FACE_BEGIN: the texture's size in texels
+			uint8_t clear[4]; // FACE_BEGIN: what the face is cleared to
+		} face;
 	} u;
 } vr_cmd_t;
 
@@ -95,6 +104,7 @@ typedef struct {
 
 	// Counts for the frame, for stats and logs
 	uint32_t sprite_count;
+	uint32_t face_begins; // FACE_BEGIN commands: the faces drawn this frame
 	uint32_t tris_2d, tris_3d; // triangles pushed, not counting sprites
 } vr_cmdlist_t;
 

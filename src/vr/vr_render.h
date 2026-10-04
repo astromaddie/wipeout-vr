@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "vr_cmd.h"
 #include "vr_stage.h"
 #include "vr_types.h"
 
@@ -47,6 +48,7 @@ typedef struct {
 typedef struct {
 	vr_provider_t provider;
 	vr_render_settings_t settings;
+	const vr_settings_t *live_settings; // when set, the cockpit keys are re-read from it every frame
 	const char *dump_dir; // where dump_frame writes; NULL for none
 } vr_render_config_t;
 
@@ -80,9 +82,18 @@ typedef struct {
 	vr_mode_t mode;
 	uint32_t frames_replayed;
 	uint32_t commands, triangles, sprites, draw_calls;
+	uint32_t face_passes; // instrument faces drawn into their textures this frame
 	bool recentred;
 	float fade_alpha;
 } vr_render_frame_info_t;
 const vr_render_frame_info_t *vr_render_frame_info(void);
+
+// The GL texture of an instrument face (0 before its first draw), for the
+// harness: it reads it back; nothing in a normal frame does.
+uint32_t vr_render_face_texture(int face);
+
+// A camera set the last frame recorded (a render_set_view each; stereo frames
+// have the eyes in it), for the harness. False past the last one.
+bool vr_render_view(int index, vr_camset_t *out);
 
 #endif

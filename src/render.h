@@ -73,6 +73,15 @@ void render_textures_dump(const char *path);
 void render_vr_race_view(bool stereo); // the next render_set_view is the race camera
 bool render_vr_wide_cull(void); // distance-only culling: the frame is stereo
 void render_vr_sky(bool on); // draws between these calls follow the camera: re-translated per eye
+
+// The cockpit (src/vr/vr_cockpit.c)
+bool render_vr_stereo(void); // the frame being recorded is stereo
+struct vr_cockpit_settings;
+const struct vr_cockpit_settings *render_vr_cockpit_settings(void); // the live cockpit keys
+void render_vr_cockpit_anchor(vec3_t pos, vec3_t angles); // the eyes sit here this frame (before render_set_view)
+void render_vr_face_begin(int face, int width, int height, rgba_t clear); // 2D draws until the end go into the face's texture
+void render_vr_face_end(void);
+void render_vr_face_quad(int face, const vec3_t corners[4], rgba_t color); // top-left, top-right, bottom-right, bottom-left
 #endif
 
 #endif

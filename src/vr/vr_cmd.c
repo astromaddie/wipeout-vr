@@ -40,6 +40,7 @@ void vr_cmdlist_reset(vr_cmdlist_t *l, int32_t blend, bool cull) {
 	l->initial_blend = blend;
 	l->initial_cull = cull;
 	l->sprite_count = 0;
+	l->face_begins = 0;
 	l->tris_2d = 0;
 	l->tris_3d = 0;
 }
@@ -53,6 +54,9 @@ vr_cmd_t *vr_cmdlist_push(vr_cmdlist_t *l, vr_cmd_type_t type, uint8_t flags) {
 	if (type == VR_CMD_SPRITE) {
 		l->sprite_count++;
 	}
+	else if (type == VR_CMD_FACE_BEGIN) {
+		l->face_begins++;
+	}
 	return c;
 }
 
@@ -62,7 +66,7 @@ void vr_cmdlist_push_tris(vr_cmdlist_t *l, const vr_vertex_t v[3], uint8_t flags
 	memcpy(&l->verts[l->vert_len], v, 3 * sizeof(vr_vertex_t));
 	l->vert_len += 3;
 
-	if (flags & VR_CMD_FLAG_2D) {
+	if (flags & (VR_CMD_FLAG_2D | VR_CMD_FLAG_FACE)) {
 		l->tris_2d++;
 	}
 	else {
