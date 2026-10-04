@@ -6,6 +6,7 @@
 #include "sfvr_test.h"
 #include "vr_log.h"
 #include "vr_settings.h"
+#include "vr_stage.h"
 
 static void quiet(const char *line) { (void)line; }
 
@@ -67,7 +68,8 @@ static void test_registry(void) {
 	// the standard keys the doc's section 7 lists, and the port's own
 	const char *names[] = {
 		"world_scale", "follow_vehicle_rotation", "horizon_lock", "hud_mode", "hud_distance", "hud_scale",
-		"force_mono", "diag_attract_stereo", "panel_distance", "panel_width",
+		"force_mono", "diag_attract_stereo", "diag_attract_cockpit", "panel_distance", "panel_width",
+		"cockpit", "cockpit_bank", "cockpit_eye_forward_cm", "cockpit_eye_up_cm", "cockpit_glass",
 		"resolution_scale", "refresh_rate", "probe_seconds", "force_render", "diag_yaw", "dump_frame", "timing",
 		"turn_mode", "snap_angle", "vignette", "seated", "haptics", "dominant_hand"
 	};
@@ -77,7 +79,7 @@ static void test_registry(void) {
 	CHECK_INT(vr_settings_index("nonsense"), -1);
 	CHECK_INT(vr_settings_index(NULL), -1);
 	CHECK(vr_settings_count() <= VR_SETTINGS_MAX_KEYS);
-	CHECK_INT(vr_settings_count(), sfvr_settings_count() + 5);
+	CHECK_INT(vr_settings_count(), sfvr_settings_count() + 11);
 
 	// env names
 	char name[64];
@@ -91,7 +93,7 @@ static void test_defaults_and_creation(void) {
 	CHECK_NEAR(get(&s, "snap_angle"), 30, 1e-9);
 	CHECK_NEAR(get(&s, "resolution_scale"), 1.0, 1e-9);
 	CHECK_NEAR(get(&s, "refresh_rate"), 90, 1e-9);
-	CHECK_NEAR(get(&s, "world_scale"), 128, 1e-9);
+	CHECK_NEAR(get(&s, "world_scale"), 88, 1e-9);
 	CHECK_NEAR(get(&s, "force_mono"), 0, 1e-9);
 	CHECK_NEAR(get(&s, "panel_distance"), 2.0, 1e-9);
 	CHECK_NEAR(get(&s, "probe_seconds"), 0, 1e-9);
@@ -105,7 +107,7 @@ static void test_defaults_and_creation(void) {
 	CHECK(has(text, "snap_angle = 30\n"));
 	CHECK(has(text, "resolution_scale = 1.0\n"));
 	CHECK(has(text, "vignette = false\n"));
-	CHECK(has(text, "world_scale = 128.0\n"));
+	CHECK(has(text, "world_scale = 88.0\n"));
 	CHECK(has(text, "hud_mode = \"near\"\n"));
 	CHECK(has(text, "WIPEOUT_VR_<KEY>"));
 
@@ -355,7 +357,7 @@ static void test_env_overrides(void) {
 	CHECK_NEAR(get(&s, "force_render"), 1, 1e-9);
 	CHECK_NEAR(get(&s, "turn_mode"), 1, 1e-9);
 	CHECK_NEAR(get(&s, "hud_scale"), 100, 1e-9);
-	CHECK_NEAR(get(&s, "world_scale"), 128, 1e-9);
+	CHECK_NEAR(get(&s, "world_scale"), 88, 1e-9);
 	CHECK_NEAR(get(&s, "refresh_rate"), 90, 1e-9);
 
 	// the file's values are not touched, and so are not written back
@@ -386,6 +388,68 @@ static void test_set(void) {
 	vr_settings_free(&s);
 }
 
+
+// The cockpit keys: defaults, the enum, clamping, an env override and a live re-read
+static const char *cockpit_env(const char *name) {
+	if (strcmp(name, "WIPEOUT_VR_COCKPIT_BANK") == 0) {
+		return "follow";
+	}
+	if (strcmp(name, "WIPEOUT_VR_COCKPIT_EYE_UP_CM") == 0) {
+		return "-500";
+	}
+	return NULL;
+}
+
+static void test_cockpit_keys(void) {
+	vr_settings_t s;
+	parse(&s, "");
+	vr_cockpit_settings_t c;
+	vr_cockpit_settings_from(&c, &s);
+	CHECK(c.enabled);
+	CHECK_INT(c.bank, VR_COCKPIT_BANK_LEVEL);
+	CHECK_NEAR(c.eye_forward_cm, 0, 1e-9);
+	CHECK_NEAR(c.eye_up_cm, 0, 1e-9);
+	CHECK(c.glass);
+
+	char *text = format(&s);
+	CHECK(has(text, "cockpit = true\n"));
+	CHECK(has(text, "cockpit_bank = \"level\"\n"));
+	CHECK(has(text, "cockpit_eye_forward_cm = 0.0\n"));
+	CHECK(has(text, "cockpit_glass = true\n"));
+	free(text);
+	vr_settings_free(&s);
+
+	// the file: enum names (any case), out-of-range cm, bad bools
+	CHECK(parse(&s, "version = 1\n[vr]\ncockpit_bank = \"Cockpit\"\ncockpit_eye_forward_cm = 80\n"
+		"cockpit_eye_up_cm = -12.5\ncockpit = off\ncockpit_glass = maybe\n") > 0);
+	vr_cockpit_settings_from(&c, &s);
+	CHECK(!c.enabled);
+	CHECK_INT(c.bank, VR_COCKPIT_BANK_COCKPIT);
+	CHECK_NEAR(c.eye_forward_cm, 30, 1e-9); // clamped
+	CHECK_NEAR(c.eye_up_cm, -12.5, 1e-6);
+	CHECK(c.glass); // an invalid bool takes the default
+	vr_settings_free(&s);
+
+	// an env override wins for the run and is clamped like the file
+	parse(&s, "");
+	CHECK_INT(vr_settings_apply_env(&s, cockpit_env), 2);
+	vr_cockpit_settings_from(&c, &s);
+	CHECK_INT(c.bank, VR_COCKPIT_BANK_FOLLOW);
+	CHECK_NEAR(c.eye_up_cm, -30, 1e-9);
+	CHECK_NEAR(file_value(&s, "cockpit_bank"), 0, 1e-9); // never written back
+
+	// live: the page sets a key and the next read sees it, with no rebuild
+	vr_settings_set(&s, "cockpit_eye_forward_cm", 7);
+	vr_settings_set(&s, "cockpit_bank", 2);
+	vr_cockpit_settings_from(&c, &s);
+	CHECK_NEAR(c.eye_forward_cm, 7, 1e-9);
+	CHECK_INT(c.bank, VR_COCKPIT_BANK_COCKPIT);
+	vr_settings_set(&s, "cockpit_eye_forward_cm", 99);
+	vr_cockpit_settings_from(&c, &s);
+	CHECK_NEAR(c.eye_forward_cm, 30, 1e-9);
+	vr_settings_free(&s);
+}
+
 static void test_load_and_save_files(void) {
 	char dir[] = "/tmp/vr_settings_test_XXXXXX";
 	CHECK(mkdtemp(dir) != NULL);
@@ -403,7 +467,7 @@ static void test_load_and_save_files(void) {
 	CHECK(has(text, "version = 1\n"));
 	CHECK(has(text, "[vr]\n"));
 	CHECK(has(text, "snap_angle = 30\n"));
-	CHECK(has(text, "world_scale = 128.0\n"));
+	CHECK(has(text, "world_scale = 88.0\n"));
 	free(text);
 	CHECK(access(tmp, F_OK) != 0); // the temp file was renamed away
 	struct stat st;
@@ -477,6 +541,7 @@ int main(void) {
 	RUN(test_duplicates_and_odd_files);
 	RUN(test_env_overrides);
 	RUN(test_set);
+	RUN(test_cockpit_keys);
 	RUN(test_load_and_save_files);
 	return SFVR_TEST_RESULT("vr_settings");
 }

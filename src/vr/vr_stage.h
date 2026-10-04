@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "vr_cockpit_core.h"
 #include "vr_math.h"
 #include "vr_settings.h"
 #include "vr_types.h"
@@ -27,12 +28,15 @@ typedef struct {
 	int dump_frame; // 0 = off
 	bool timing;
 	int ui_width, ui_height; // the 2D layout size: render_size() in VR, and the HUD and panel textures
+	vr_cockpit_settings_t cockpit; // refreshed every frame from the live settings
 } vr_render_settings_t;
 
 #define VR_UI_WIDTH 1920
 #define VR_UI_HEIGHT 1080
 
 void vr_render_settings_from(vr_render_settings_t *out, const vr_settings_t *s);
+// The cockpit keys alone, clamped. The renderer calls this every frame on the live settings.
+void vr_cockpit_settings_from(vr_cockpit_settings_t *out, const vr_settings_t *s);
 
 typedef enum {
 	VR_MODE_NONE, // before the first frame

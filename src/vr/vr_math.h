@@ -47,6 +47,10 @@ void vr_game_view(const float pos[3], const float angles[3], float out[16]);
 // sprite_mat of render_set_view(): the billboard rotation. 3x3.
 void vr_game_sprite_rotation(const float angles[3], float rot[9]);
 
+// The rotation part of a ship's matrix: mat4_set_yaw_pitch_roll(angles) with the
+// ship's (pitch, yaw, roll). Ship space to world. 3x3.
+void vr_game_ship_rotation(const float angles[3], float rot[9]);
+
 
 // -----------------------------------------------------------------------------
 // The rig: game camera plus head

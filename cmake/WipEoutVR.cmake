@@ -59,6 +59,9 @@ add_library(wipeout_vr_core STATIC
 	src/vr/vr_clock.h
 	src/vr/vr_cmd.c
 	src/vr/vr_cmd.h
+	src/vr/vr_cockpit_core.c
+	src/vr/vr_cockpit_core.h
+	src/vr/vr_cockpit_geometry.inc
 	src/vr/vr_compose.c
 	src/vr/vr_compose.h
 	src/vr/vr_input.c
@@ -140,6 +143,22 @@ target_compile_options(test_vr_view PRIVATE
 	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
 )
 add_test(NAME vr_view COMMAND test_vr_view)
+
+# Cockpit H: the table, the cut, the trim rule, the parts, the eye and the bank modes
+add_executable(test_vr_cockpit tests/vr/test_vr_cockpit.c src/types.c)
+set_property(TARGET test_vr_cockpit PROPERTY C_STANDARD 11)
+target_include_directories(test_vr_cockpit PRIVATE src third_party/sfvr/tests)
+target_link_libraries(test_vr_cockpit PRIVATE wipeout_vr_core)
+target_compile_options(test_vr_cockpit PRIVATE
+	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
+)
+add_test(NAME vr_cockpit COMMAND test_vr_cockpit)
+
+# The committed C table is what the committed JSON generates (no game data, no browser)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+	add_test(NAME vr_cockpit_geometry COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/mockup/check_cockpit_geometry.py)
+endif()
 
 
 # Host acceptance harness (Linux; needs a GL context, so it runs under Xvfb with

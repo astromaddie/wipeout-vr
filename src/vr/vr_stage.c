@@ -20,6 +20,17 @@ void vr_render_settings_from(vr_render_settings_t *out, const vr_settings_t *s) 
 	out->timing = vr_settings_get(s, "timing") != 0;
 	out->ui_width = VR_UI_WIDTH;
 	out->ui_height = VR_UI_HEIGHT;
+	vr_cockpit_settings_from(&out->cockpit, s);
+}
+
+void vr_cockpit_settings_from(vr_cockpit_settings_t *out, const vr_settings_t *s) {
+	out->enabled = vr_settings_get(s, "cockpit") != 0;
+	out->bank = (int)vr_settings_get(s, "cockpit_bank");
+	out->eye_forward_cm = (float)vr_settings_get(s, "cockpit_eye_forward_cm");
+	out->eye_up_cm = (float)vr_settings_get(s, "cockpit_eye_up_cm");
+	out->glass = vr_settings_get(s, "cockpit_glass") != 0;
+	out->world_scale = (float)vr_settings_get(s, "world_scale");
+	vr_cockpit_settings_sanitize(out);
 }
 
 float vr_fade_alpha(float seconds) {

@@ -192,6 +192,26 @@ void vr_game_sprite_rotation(const float angles[3], float rot[9]) {
 	rot[8] = cx * cy;
 }
 
+void vr_game_ship_rotation(const float angles[3], float rot[9]) {
+	// ship_update: mat4_set_yaw_pitch_roll(&self->mat, self->angle)
+	float sx = sinf(angles[0]);
+	float sy = sinf(-angles[1]);
+	float sz = sinf(-angles[2]);
+	float cx = cosf(angles[0]);
+	float cy = cosf(-angles[1]);
+	float cz = cosf(-angles[2]);
+
+	rot[0] = cy * cz + sx * sy * sz;
+	rot[3] = cz * sx * sy - cy * sz;
+	rot[6] = cx * sy;
+	rot[1] = cx * sz;
+	rot[4] = cx * cz;
+	rot[7] = -sx;
+	rot[2] = -cz * sy + cy * sx * sz;
+	rot[5] = cy * cz * sx + sy * sz;
+	rot[8] = cx * cy;
+}
+
 void vr_sprite_from_view_rotation(const float rot[9], float out[9]) {
 	float t[9];
 	mat3_transpose(rot, t);

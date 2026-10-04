@@ -10,18 +10,37 @@
 #include "vr_paths.h"
 
 // Keys that only this port has. The standard keys live in the sfvr registry.
-// world_scale and panel_* are placeholders until first wear.
+// panel_* are placeholders until first wear.
+static const char *const cockpit_bank_values[] = { "level", "follow", "cockpit", NULL };
+
 static const sfvr_setting_key port_keys[] = {
-	// Game units per metre. Placeholder: the chase camera sits 1024 units behind
-	// the ship, which should be about 8 m.
-	{ "world_scale", SFVR_SETTING_FLOAT, 128.0, 16.0, 1024.0, NULL },
+	// Game units per metre. 88, decided with the user (2026-10-04): the cockpit
+	// is fitted at it (VR_COCKPIT_WORLD_SCALE), the ship comes out 9.7 m long
+	// and the track 30 to 40 m wide. It applies to the chase view too.
+	{ "world_scale", SFVR_SETTING_FLOAT, 88.0, 16.0, 1024.0, NULL },
 	// Show the whole frame on the mono panel, even in a race.
 	{ "force_mono", SFVR_SETTING_BOOL, 0.0, 0.0, 1.0, NULL },
 	// Diagnostic: render the attract-mode race in stereo, for unattended eye dumps.
 	{ "diag_attract_stereo", SFVR_SETTING_BOOL, 0.0, 0.0, 1.0, NULL },
+	// Diagnostic: the attract mode always uses its internal camera, with the player's internal
+	// view flag, so an unattended run with diag_attract_stereo shows the cockpit.
+	{ "diag_attract_cockpit", SFVR_SETTING_BOOL, 0.0, 0.0, 1.0, NULL },
 	// The phase-1 flat panel: a world-locked quad.
 	{ "panel_distance", SFVR_SETTING_FLOAT, 2.0, 0.8, 20.0, NULL },
-	{ "panel_width", SFVR_SETTING_FLOAT, 2.4, 0.5, 10.0, NULL }
+	{ "panel_width", SFVR_SETTING_FLOAT, 2.4, 0.5, 10.0, NULL },
+	// Cockpit H (docs/COCKPIT_MOCKUP.md). The first four are for the in-headset
+	// settings page, which does not exist yet; they are read live every frame.
+	// The internal view becomes the cockpit; off keeps the flat internal view
+	// and the floating HUD panel.
+	{ "cockpit", SFVR_SETTING_BOOL, 1.0, 0.0, 1.0, NULL },
+	// How the cockpit follows the ship's roll: level (yaw and pitch only), follow
+	// (view and cockpit roll together) or cockpit (the cockpit rolls around a level head).
+	{ "cockpit_bank", SFVR_SETTING_ENUM, 0.0, 0.0, 2.0, cockpit_bank_values },
+	// Seat adjustment from the fitted eye, in physical centimetres.
+	{ "cockpit_eye_forward_cm", SFVR_SETTING_FLOAT, 0.0, -30.0, 30.0, NULL },
+	{ "cockpit_eye_up_cm", SFVR_SETTING_FLOAT, 0.0, -30.0, 30.0, NULL },
+	// Config only: the canopy glass tint.
+	{ "cockpit_glass", SFVR_SETTING_BOOL, 1.0, 0.0, 1.0, NULL }
 };
 #define PORT_KEY_COUNT (sizeof(port_keys) / sizeof(port_keys[0]))
 
