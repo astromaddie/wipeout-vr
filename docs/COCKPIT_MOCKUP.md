@@ -1,6 +1,6 @@
 # Cockpit H (full canopy): mockup, assets and build plan
 
-Status (2026-10-04, round 3): the user picked cockpit H, reviewed its asset set and asked for a smaller pilot against the ship. This round has three `world_scale` options with the eye fitted from a seated pilot, a fuller left pod, and an updated asset set and plan. The user picks the scale and approves the assets. Nothing is built into the game yet, and `src/` is untouched. The UI working agreement goes mockup with variations, then all the UI's assets for approval, then the build.
+Status (2026-10-04): built, host-verified, not yet worn. The user decided `world_scale` 88 and approved the asset set. Cockpit H is in the game behind `WIPEOUT_VR`: the hull match and cut, per-ship trim, the draw in stereo internal race frames, the instrument faces, the three bank modes and the settings keys. The in-headset settings page does not exist yet. "Implementation (built)" below is the current state; the rest of this file is the design record. The UI working agreement was mockup with variations, then all the UI's assets for approval, then the build.
 
 The idea: in the VR internal view you sit inside your own ship. The player's real ship model is drawn double-sided around the eye, with a cabin cut into it. Built geometry adds a canopy frame, a rear bulkhead and a roll hoop, plus a dash with diegetic instruments, and the floating HUD panel goes away. By default the cockpit follows ship yaw and pitch but stays level in banks.
 
@@ -28,6 +28,15 @@ Precedent is the Star Fox cockpit (`starfox-enhanced` 99712f5, 82fd741, ddee4ff,
 | Weapon | It stays on the dash-centre keystone |
 | Trim | anasta's trim stays as the rule produces it, for now |
 
+## Final decisions (user, 2026-10-04)
+
+| Topic | Decision |
+| --- | --- |
+| world_scale | **88**, not the 100 recommended below. It is the default everywhere, the chase view included. The geometry is refitted at 88 (eye y -85.7, cut box x ±33.9, z -31.7 to +54.6, y < -5.6) |
+| Eye | The fitted eye (`VR_COCKPIT_EYE_Y`) is for the VR cockpit view only. The game's own camera position stays `ship_cockpit()` for the sim and the sound |
+| Assets | Approved: the C1 slim frame, the C2 split dash with the cabin opened over the legs, the weapon keystone on the dash centre, the left pod (lap, position, lives stars, two previous laps, lap time, lap record), the right pod (speedo plus a generic status slot showing the shield timer). Trim is sampled per ship from its own textures at load |
+| Settings | `cockpit` (on/off), `cockpit_bank` (`level` default, `follow`, `cockpit`), `cockpit_eye_forward_cm` and `cockpit_eye_up_cm` are user-facing, for the settings page. `cockpit_glass` is config-only. The page itself is designed separately |
+
 ## Files
 
 | Path | What |
@@ -38,6 +47,8 @@ Precedent is the Star Fox cockpit (`starfox-enhanced` 99712f5, 82fd741, ddee4ff,
 | `tools/mockup/cockpit_mockup.js` | The mockup itself: cabin, cockpit H plus C1-C3 for comparison, instruments and pod faces, trim sampling, checks, track animation, UI. With `?sheet=assets` it draws the asset sheet; with `?export=geometry` it exports the parts |
 | `tools/mockup/shoot_cockpit_mockup.py` | Headless Chrome: the hybrid shots, `checks.json`, the hybrid sheet and the asset sheet. With `--variations`, the C1-C3 set too |
 | `tools/mockup/export_cockpit_geometry.py` | Writes `tools/mockup/cockpit_geometry.json` from the page's own builders. With `--c OUT`, it also writes the C table |
+| `tools/mockup/check_cockpit_geometry.py` | Checks the committed C table is what the committed JSON generates, and that neither holds anything but authored geometry. A CTest |
+| `tools/mockup/compare_cockpit_render.py` | Compares a harness render of the real cockpit with the page's shot of the same ship (`bg=black` hides track and sky) and writes a build / mockup / difference montage |
 | `tools/mockup/cockpit_geometry.json` | Committed. Cockpit H's geometry for the build: parts per hull shape in game units, material slots, faces, the cut box and the trim rule. It holds no game data |
 
 Everything generated lands in `build/` (git-ignored) and is derived from game data, so none of it gets committed:
@@ -247,11 +258,11 @@ The weakest case is anasta, a mostly white hull with 1% saturated area. The rule
 
 ## Geometry data for the build
 
-`tools/mockup/cockpit_geometry.json` (format `wipeout-vr-cockpit-geometry/1`, about 230 kB) is what the build consumes. It's exported at `world_scale` 100, the recommendation: 90 parts, about 1,430 triangles per hull and 4,660 over the four hulls. It holds:
+`tools/mockup/cockpit_geometry.json` (format `wipeout-vr-cockpit-geometry/1`, about 230 kB) is what the build consumes. It's exported at `world_scale` 88 (the user's decision): 90 parts, about 1,424 triangles per hull and 4,640 over the four hulls. It holds:
 
 - Ship space in game units with the game's own axes (+y down, +z forward).
-- `world_scale` (100) and the fitted eye (0, -97, 0), which replaces `ship_cockpit()` in the cockpit view, plus the fit rule.
-- The cabin cut box: x ±38.5, y < -6 (open top), z -36 to +62. The build clips the player's hull against it at load.
+- `world_scale` (88) and the fitted eye (0, -85.7, 0), which replaces `ship_cockpit()` in the cockpit view, plus the fit rule.
+- The cabin cut box: x ±33.9, y < -5.6 (open top), z -31.7 to +54.6 (at 88; the metres are those of the table below). The build clips the player's hull against it at load.
 - The hull shapes, with the model names and captured triangle counts used to match a ship to its shape: Feisar sophia/jacko, Qirex solaar/arian, AG Systems chang/Dekka, Auricom arial/anasta. With no match, the build draws no cockpit.
 - Material slots: `frame`, `frame_dark`, `cabin`, `cabin_dark`, `seat`, `bezel`, `glass`, `trim_primary` and `trim_secondary`. The fixed slots carry an authored default; the trim slots are sampled.
 - The trim rule as parameters and steps. No sampled colour is stored.
@@ -269,113 +280,108 @@ python3 tools/mockup/export_cockpit_geometry.py --world-scale 112     # refit, r
 python3 tools/mockup/export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc
 ```
 
-Both outputs get committed, and neither holds game data. In the headset, `world_scale` stays a setting. Moving it away from the fitted value scales the whole cockpit with the ship and the world (it's in ship units), so the pilot-to-hull fit only holds at the fitted value. That's why the setting's default becomes the chosen scale.
+Both outputs get committed, and neither holds game data (`check_cockpit_geometry.py` checks it). In the headset, `world_scale` stays a setting. Moving it away from the fitted value scales the whole cockpit with the ship and the world (it's in ship units), so the pilot-to-hull fit only holds at the fitted value. That's why the setting's default is the chosen scale, 88.
 
 Recommendation: keep the JSON as the committed, reviewable source, and compile it into C tables rather than parsing JSON at runtime. That's the Star Fox pattern (`generate_cockpit_assets.py` writing `cockpit_assets.inc`).
 
-`export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc` writes the table: slot enum and default colours, hull model table, part table (`group`, `slot`, `hull_mask`, triangle range), faces, face elements and one flat vertex array. Today it writes `build/cockpit/vr_cockpit_geometry.inc` (330 kB of C, which compiles cleanly with `-Wall`, with `VR_COCKPIT_WORLD_SCALE` and `VR_COCKPIT_EYE_Y` defines), and the build will commit its output under `src/vr/`. No JSON parser, no file IO, no new dependency. The vertex array is 4,660 triangles x 36 bytes, about 170 kB.
+`export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc` writes the table: slot enum and default colours, hull model table, part table (`group`, `slot`, `hull_mask`, triangle range), faces, face elements and one flat vertex array. It writes `src/vr/vr_cockpit_geometry.inc`, which is committed (330 kB of C, clean with `-Wall`, with `VR_COCKPIT_WORLD_SCALE` and `VR_COCKPIT_EYE_Y` defines). The defines and the slot enum are always visible; the tables only where `VR_COCKPIT_GEOMETRY_DATA` is defined first (`vr_cockpit_core.c`), so the vertices live in one translation unit. No JSON parser, no file IO, no new dependency. The vertex array is 4,660 triangles x 36 bytes, about 170 kB.
 
-## Implementation plan (not started)
+## Implementation (built)
 
-Everything lives behind `WIPEOUT_VR`, with the flat build unchanged (`tools/verify_flat_build_unchanged.sh`). New code goes in `src/vr/vr_cockpit.{h,c}` plus the generated `src/vr/vr_cockpit_geometry.inc`. The game files get a few fenced hooks only.
+Everything lives behind `WIPEOUT_VR`, with the flat build unchanged (`tools/verify_flat_build_unchanged.sh`). The pure part is `src/vr/vr_cockpit_core.{h,c}` (in `wipeout_vr_core`: the table, the cut, the trim rule, the parts, the eye and the bank maths; no game headers) with the generated `src/vr/vr_cockpit_geometry.inc`. The game-facing part is `src/vr/vr_cockpit.{h,c}`. The game files get fenced hooks only: `ship.c` (two), `race.c` (two), `hud.c` (three functions), `weapon.c` (one accessor), `render.h`.
 
 ### When the cockpit draws
 
-It draws in a stereo race frame (`render_vr_race_view(true)`), when the player's ship has `SHIP_VIEW_INTERNAL` and the camera is `camera_update_race_internal`, and `vr.cockpit` is on. The attract mode, the chase view, the intro fly-over and the mono panel keep today's behaviour.
+`vr_cockpit_begin(&g.camera)` runs in `race.c` right after `render_vr_race_view()`, before `render_set_view()`. The cockpit is the view when all of these hold:
+
+- the frame is stereo (`render_vr_stereo()`; the attract mode's cutting cameras and `force_mono` are mono);
+- `cockpit` is on;
+- the pilot's ship has `SHIP_VIEW_INTERNAL`, is not in rescue, and its hull matched a shape;
+- the camera is `camera_update_race_internal`, or `camera_update_attract_internal`, which only reaches a stereo frame under `vr.diag_attract_stereo`.
+
+Otherwise nothing changes: the chase view, the intro fly-over, the mono panel and `cockpit = off` keep the floating HUD panel. The harness checks each of these.
 
 ### Eye point
 
-The cockpit view uses the fitted eye, `VR_COCKPIT_EYE_Y` from the table (game y -97 at 100), not `ship_cockpit()`'s -128. The game's own camera position stays as it is for the game: `camera_update_race_internal` still sets it, and the sim and sound keep using it. The VR anchor adds the difference in ship space, (0, -97 - (-128), 0) through the ship matrix, the same way `head_translation` is composed today (`vr_math.c`). The eye offsets (`cockpit_eye_forward_cm`, `cockpit_eye_up_cm`) add to that in physical centimetres, so they apply live without rebuilding any geometry. The sprite facing and the distance fade then use the eye, as they already do (section 5 of the architecture doc).
+The head sits at the fitted eye through the ship's full matrix, `S * e'`, with `e' = (0, VR_COCKPIT_EYE_Y - up_cm / 100 * world_scale, forward_cm / 100 * world_scale)`. `render_vr_cockpit_anchor()` hands the renderer that point and the bank mode's angles; `vr_rec_view` uses them in place of the game camera for the eyes and the HUD camera (with `follow_vehicle_rotation` and `horizon_lock` out of the way, since the angles already carry the right roll). The game camera stays where `camera_update_race_internal` put it (the recorded VIEW still carries it, the sim and the sound use it); in the cockpit the head is 42.3 units (0.48 m) above it along the ship's up axis. The seat offsets are physical, so they apply live with no rebuild. The sprite facing and the distance fade follow the eyes as before.
 
 ### Load (`ships_load`, one fenced call)
 
-`vr_cockpit_load(ship_models, ship_textures)` does three things:
+`vr_cockpit_load(ship_textures, "wipeout/common/allsh.cmp")`, once at game init, for each of the 8 ships:
 
-1. It matches each of the 8 models to a hull shape by name and triangle count.
-2. It triangulates and clips each model's polygons once against the cut box, the same way `object_draw` would push them. It keeps the parts outside the box, with interpolated uv and colour, plus a reversed copy at 55% colour for the inside of the hull.
-3. It runs the trim rule on each model. The pixels come from decoding `allsh.cmp` a second time with `image_load_compressed`/`image_load_from_bytes`, because the GL atlas is not read back (lesson 10). That's about 150 triangles x 6 samples per ship, once.
+1. Matches the model to a hull shape by name and by the triangles `object_draw` pushes. No match: that ship keeps the flat internal view (logged).
+2. Clips every triangle against the cut box (the five planes of the open-topped box, keeping the outside parts, uv and colour interpolated) and adds a reversed copy at 55% colour for the inside. The pieces keep their texture index and are pushed with `render_push_tris` like `object_draw` does. Engine sprites are not part of the cockpit hull.
+3. Samples the trim from the ship's own textures. The pixels come from decoding `allsh.cmp` again, copied out of the game's temp memory (eight objects at most) and freed at the end of the load, because the atlas is not read back (lesson 10).
+4. Pre-shades the authored parts: a flat colour per triangle from its slot and the mockup's light in ship space (ambient 0.55, the sun (0.35, 1, 0.45) in the page's axes, the trim slots +0.25, the normal turned toward the fitted eye). The parts are untextured and `RENDER_NO_TEXTURE` is a 128 grey that the shader's x2 makes 1.0, so the vertex colour is the colour on screen.
 
-The authored parts are pre-shaded once: a flat colour per triangle from its slot and a fixed light in ship space, stored as vertex colour / 2 because the game's shader doubles it.
+The trim rule in `vr_cockpit_core.c` is the page's, with one tie-break the page leaves to float rounding: a sample exactly on a texel boundary takes the lower texel, and a sample outside the texture has no texel and is skipped. Without it anasta's orange secondary flipped to violet on one sample (it is 1.35% saturated). Run on the real data it picks, against the page: sophia b39900 / 0000b3 (page the same), solaar 01b275 / 607fb2 (01b374 / 5f7fb3), jacko 0707b2 / b20532 (0707b2 / b20533), chang b38f02 / 321fb3 (b39001 / 3120b3), arian b22c02 / 621801 fallback (b32e04 / 621902), arial b20d0d / 620707 fallback (b30d0d / 620707), anasta 5d7db3 / b27405 (5d7eb3 / b27505), Dekka b38f01 / 00b23f (b38f01 / 00b23f). Every channel is within 3 levels, with the same hues and the same fallbacks.
 
 ### Draw (`ships_draw`, one fenced branch)
 
-Where `ships_draw` skips the internal-view ship, it calls `vr_cockpit_draw(ship)` instead. That function:
+Where `ships_draw` skips the internal-view ship it calls `vr_cockpit_draw(ship)` when the cockpit is active. In order, all through the game's own `render_*` calls:
 
-1. Sets the model matrix M_c (see below) with `render_set_model_mat`.
-2. Pushes the clipped hull with its texture indices, `render_set_cull_backface(true)`; the inside copy is wound the other way.
-3. Pushes the authored parts with `RENDER_NO_TEXTURE` and culling off, since they're double-sided.
-4. Pushes the three face quads with a new `VR_CMD_FACE` command.
-5. Pushes the glass last, with depth write off and normal blend at alpha 0.045.
+1. `render_set_model_mat(M_c)`, then the hull (outside copy) and its inside copy with backface culling on, with the ship's textures.
+2. Culling off, the authored parts (about 1,364 triangles per hull).
+3. The three face quads, through `render_vr_face_quad`: a `BIND_FACE` command, two triangles, a `BIND_FACE` back to the atlas.
+4. Depth write off, the glass (60 triangles, alpha 11/255 = 0.043), depth write on. The fresnel edge of the page's glass is not built (the game's shader has no place for it). `cockpit_glass` off skips it.
+5. Culling back on.
 
-The parts are about 1,430 triangles per hull, recorded into the frame's command list like any other draw. They replay per eye with no per-eye game work. The cockpit's nearest geometry is 0.34 m (34 units at 100), so the near plane of 16 units (`NEAR_PLANE`, 0.16 m at 100) is fine.
+About 2,400 triangles in the recorded list for a ship with a 300-triangle hull. They replay per eye with no per-eye game work.
 
 ### Instrument faces (the game's own 2D UI into small textures)
 
-1. Each face gets its own GL texture and FBO, owned by the renderer: 512 x 292, 512 x 292 and 128 x 128, created at attach.
-2. In cockpit mode, `race.c`'s 2D section calls `vr_cockpit_hud_draw(ship)` instead of `hud_draw(ship)`.
-3. That function brackets each face with `render_vr_face_begin(id)` / `render_vr_face_end()`. In between it calls the same code `hud_draw` uses, with `ui_set_scale(n)` and texel positions: `ui_draw_text`, `ui_draw_number`, `ui_draw_time`, the speedo, the weapon icon.
-4. The speedo and the icon list are static in `hud.c`, so `hud.c` gets a fenced `hud_draw_speedo_at(pos, scale)` and `hud_weapon_icon(type)`.
-   The left pod also draws the previous lap times and, in championship races, the lives: the same `ui_draw_time` and `ui_draw_icon(UI_ICON_STAR)` calls `hud_draw` makes, at face positions.
-5. The recorder tags those 2D commands with a face flag and index. The replay draws each face's commands once per frame into its FBO, with an orthographic projection over the face's texels, before the eye passes.
-6. `VR_CMD_FACE(id)` in the 3D segment then draws the face quad with that texture, per eye.
+- The renderer owns the textures (512 x 292, 512 x 292, 128 x 128, created at the first `FACE_BEGIN` that names them, RGBA8, trilinear with mipmaps regenerated once a frame, anisotropy 8 where the driver offers it).
+- `race.c` calls `vr_cockpit_hud_draw(ship)` in place of `hud_draw()` when the cockpit is active. For each face it brackets the draws with `render_vr_face_begin(face, w, h, clear)` / `render_vr_face_end()`. Between them it calls `ui_set_scale(n)` and the game's own `ui_draw_text`, `ui_draw_number`, `ui_draw_time`, `ui_draw_icon`, `render_push_2d`, and the new `hud_draw_speedo_at(pos, speed, thrust)` and `hud_weapon_icon(type)` (the speedo bars and the icon list are static in `hud.c`), at the texel positions and `ui_scale` the geometry table gives. It restores the game's ui scale afterwards.
+- The recorder tags the 2D commands between begin and end `VR_CMD_FLAG_FACE`. The replay runs one face pass before the eye passes: each `FACE_BEGIN` binds that face's texture to the shared FBO, sets an orthographic projection over its texels, clears it to the face colour and draws only the face-flagged triangles. The eye and HUD passes skip them. The face quad then samples the texture in both eyes. So the faces replay once and are sampled twice, and the game's 2D code (and what it reads: the shield timer, the lap time) runs once a frame. The harness counts it.
+- The faces are drawn whenever the cockpit is active, racing or not. Previous laps show for laps already finished (two at most), the lives stars only in championship races, the position only outside time trials.
+- The status slot is `vr_cockpit_status_t status_slots[]` with one entry, `shield` (`SHIP_SHIELDED` and `weapon_shield_time_left()` over `WEAPON_SHIELD_DURATION`, in 8 segments), so a later change is one more entry.
+- What stays on the HUD quad in the cockpit: WRONG WAY and the target reticle (`hud_draw_overlay`), the pause and other menus. The quad is otherwise empty. Open question 4 still stands: they need a home in the cockpit.
 
-The faces are replayed once and sampled twice, so nothing advances twice (lesson 4). Alpha isn't involved: the faces are opaque, cleared to the bezel colour.
+### Bank modes (`vr_cockpit_pose`)
 
-The status slot is a small table of draw functions (`vr_cockpit_status_t`), with one entry, `shield` (`SHIP_SHIELDED` and the remaining shield time), so a later change is a new entry.
+`cockpit_bank` replaces the anchor rule while the cockpit is active. With `S` the ship's matrix (`ship->position`, `ship->angle`), `e'` the seat, `E = S * e'`:
 
-The floating HUD quad is not drawn in cockpit mode. The target reticle and WRONG WAY still need a home (open question).
-
-### Bank modes (`vr_math.c`, `vr_render_gl.inc`)
-
-A new port key, `vr.cockpit_bank` = `level` | `follow` | `cockpit` (default `level`), replaces the anchor rule while the cockpit is active. The anchor takes the ship's angles, not the camera's, because the internal camera only takes `internal_roll` (0.6) of the ship's roll. Let e = (0, `VR_COCKPIT_EYE_Y`, 0) be the fitted eye in ship space and E the same point through the full ship matrix, in world space:
-
-| Mode | Anchor | Cockpit matrix M_c |
+| Mode | Anchor angles | Cockpit matrix M_c |
 | --- | --- | --- |
-| `level` | yaw and pitch, roll 0 | T(E) · R(yaw, pitch, 0) · T(-e): the cockpit turns about the eye, never rolls |
-| `follow` | the ship's full yaw, pitch and roll | the ship's own matrix: the view and cockpit roll together |
-| `cockpit` | yaw and pitch, roll 0 | the ship's own matrix: the cockpit rolls around a level head |
+| `level` | the ship's pitch and yaw, roll 0 | `T(E) * R(yaw, pitch, 0) * T(-e')`: the cockpit turns about the eye and never rolls |
+| `follow` | the ship's pitch, yaw and roll | `S`: the view and the cockpit roll together |
+| `cockpit` | pitch and yaw, roll 0 | `S`: the cockpit rolls around a level head |
 
-`follow_vehicle_rotation` (the sfvr standard key) keeps governing the chase view. In the cockpit, `cockpit_bank` decides. Steering stays in the ship's frame; WipEout steers in analogue, so the Star Fox 8-way re-projection (lesson 22) isn't needed. That still needs checking in the headset in `follow`.
+The eye is a fixed point of M_c in every mode, and the head is at `E` in every mode (so with a roll it moves sideways with the ship, as the game's own camera does). In `level` and `follow` the anchor's view rotation times the cockpit's is the game's `diag(1, -1, -1)`: the cockpit does not move against the head. All of that is a unit test against the game's own matrices. `follow_vehicle_rotation` keeps governing the chase view only. `follow` still needs a check in the headset (lesson 22: steering in the ship's frame is analogue, so no 8-way re-projection).
 
-### Settings keys (port keys, `vr_settings.c`) and the settings page
+### Settings keys (port keys, `vr_settings.c`)
 
 | Key | Default | Range | Settings page | Meaning |
 | --- | --- | --- | --- | --- |
-| `cockpit_bank` | `level` | `level`, `follow`, `cockpit` | yes (user, 2026-10-04) | Bank mode (above) |
-| `cockpit_eye_forward_cm` | 0 | -30..30 | yes (user, 2026-10-04) | Physical eye offset from the fitted eye, `cm / 100 * world_scale` units, applied live |
-| `cockpit_eye_up_cm` | 0 | -30..30 | yes (user, 2026-10-04) | Same, vertical |
-| `cockpit_glass` | true | bool | no, config only (user, 2026-10-04) | Canopy glass tint on or off |
-| `cockpit` | true | bool | not decided (open question) | The internal view becomes the cockpit; off keeps the flat internal view plus the HUD panel |
-| `world_scale` | the chosen value (100 recommended) | 16..1024 | as today | The cockpit is fitted at this value (`VR_COCKPIT_WORLD_SCALE`); see "Geometry data". Now decided rather than a placeholder (architecture doc section 7) |
+| `cockpit_bank` | `level` | `level`, `follow`, `cockpit` | **page-bound** (user, 2026-10-04) | Bank mode (above) |
+| `cockpit_eye_forward_cm` | 0 | -30..30 | **page-bound** | Physical seat offset from the fitted eye, `cm / 100 * world_scale` units, applied live |
+| `cockpit_eye_up_cm` | 0 | -30..30 | **page-bound** | Same, vertical |
+| `cockpit` | true | bool | **page-bound** | The internal view becomes the cockpit; off keeps the flat internal view plus the HUD panel |
+| `cockpit_glass` | true | bool | no, config only | Canopy glass tint on or off |
+| `world_scale` | **88** | 16..1024 | as today | The cockpit is fitted at this value (`VR_COCKPIT_WORLD_SCALE`) |
 
-The in-headset settings page (standard section 7; not built yet in this port) gets a Cockpit group with three rows:
-- Bank: Level / Follow / Cockpit banks, cycled with the pad, as the standard's other enum rows are.
-- Eye forward and Eye up: in 1 cm steps, ±30 cm, previewed live in the cockpit behind the panel.
-- A "Reset eye" action that sets both eye offsets back to 0.
+All five have defaults, clamping, `WIPEOUT_VR_<KEY>` overrides and a live re-read: the renderer reads them from `vr.settings` at every frame (`vr_render_config_t.live_settings`), so a settings page that calls `vr_settings_set()` takes effect on the next frame and nothing is rebuilt. The page (not built; designed separately) is to have a Cockpit group with Bank (Level / Follow / Cockpit banks), Eye forward and Eye up (1 cm steps, previewed live behind the panel) and a "Reset eye" action that sets both offsets to 0.
 
-Changing these never rebuilds geometry.
+### Tests
 
-### Tests (host harness, before the first wear session)
+| Level | Where | What |
+| --- | --- | --- |
+| unit | `tests/vr/test_vr_cockpit.c` (`vr_cockpit`) | The table (90 parts, 4,640 triangles, contiguous ranges, known slots, hull masks, the three faces as planar rectangles of the planned size, every element's place); the hull match of the 8 models and its negatives; the cut on 3,000 random triangles (no vertex inside the box, the area adds up, uv and colour interpolated, winding kept) and the inside copy; the trim rule on synthetic textures (two hues, area weights, one hue, dark paint, grey and white, transparent texels, 1% and 0.4% saturation, untextured polygons, texel boundaries, the red wrap); the light; the parts; the eye in cm at two world scales; the three bank modes over six ship poses and three seats against `src/types.c` (head at the seat, the eye fixed, the roll, the view rotation); the eye through `vr_cam_from_pose`; eye clearance of the authored parts (at least 0.33 m on all four hulls) and the eye rays to a 5 x 4 grid on every face hitting no part |
+| unit | `tests/vr/test_vr_settings.c`, `test_vr_stage.c` | The cockpit keys: defaults, enum names, clamping, env override, live re-read; 88 as the world_scale default |
+| table | `tools/mockup/check_cockpit_geometry.py` (`vr_cockpit_geometry`) | The C table is what the JSON generates; no game data in either |
+| harness | `tests/vr/vr_render_harness.c` with `vr_cockpit_harness.inc` | With synthetic hulls (the model names and triangle counts of two real ships), through the real renderer: the cockpit draws only in a stereo internal race view (chase, mono, attract, rescue, unmatched hull, `cockpit` off, `force_mono` each fail it); the eyes at the seat for each bank mode and the seat offsets, live; a world marker lands where the recorded cameras say in both eyes; the faces replay once a frame (the status slot is asked once per game frame while two eyes and the HUD replay; a half-alpha line in the face is single-blended); the shield bar and the pods in the eye image |
+| harness, with data | the same, `WIPEOUT_VR_TEST_DATA=<root holding wipeout/...>` | All 8 real ships: valid, the right hull shape, no hull vertex in the cabin box, the tub floor at least 2 cm above the hull's bottom over the seat and leg footprint, the trim; then two real cockpits are rendered at the mockup's field of view |
 
-- The table matches the JSON: part and triangle counts, and every slot is known.
-- Each of the 8 models matches a shape.
-- After clipping, no hull triangle has a vertex inside the cut box.
-- The fitted eye: the tub floor is at least 2 cm above every hull shape's bottom over the seat footprint.
-- Eye clearance is at least 0.33 m.
-- The eye rays to the face grids hit nothing, as in the mockup's checks.
-- A face replay produces the expected texels for a fixed HUD state.
-- M_c per bank mode: the eye is a fixed point, and the roll is 0, full or full as the table says.
-- The flat build is unchanged.
+Verified against the approved mockup (`compare_cockpit_render.py`, ships 0 and 1, the cockpit alone on black at the mockup's field of view): 98.7% and 97.7% of the pixels either draws are drawn by both, the mean colour difference is 10 levels and 95% of the pixels are within 32 levels. The faces differ in what they show.
 
 Then a wear session (lesson 1): readability, the keystone, the bank modes, and comfort with the hull this close.
 
-## Open questions (round 3)
+## Open questions
 
-1. Pick the `world_scale`: 112, 100 or 88 (see the scale options sheet). I recommend 100. The geometry data is exported at 100 now and is regenerated in one command for another pick.
-2. Approve the updated asset set. It now has the cabin opening over the legs with the dash sitting in it, the canopy sill 5 cm outside the opening, and the new left pod with the lives and previous laps.
-3. Does `cockpit` (cockpit on/off) also go on the settings page, or stay config-only like `cockpit_glass`?
-4. The target reticle and WRONG WAY still need a home: the reticle at the target's depth (standard section 4), and WRONG WAY on a pod or the windscreen.
-5. To judge in the headset: the stereo size of the world and the sense of speed at the chosen scale, which comes out at 370 km/h at the lap-record pace at 100.
+1. Answered (2026-10-04): `world_scale` 88, the asset set approved, `cockpit` on the settings page, `cockpit_glass` config only.
+2. The target reticle and WRONG WAY still need a home in the cockpit: the reticle at the target's depth (standard section 4), and WRONG WAY on a pod or the windscreen. They stay on the otherwise empty HUD quad for now.
+3. To judge in the headset: the stereo size of the world and the sense of speed at 88 (420 km/h at the lap-record pace), whether `follow` steers well banked, and the glass without the page's fresnel edge.
+4. The settings page itself: the Cockpit group is specified above; it needs its own design.
 
 ## Round 1 variations (C1-C3, kept for comparison)
 
