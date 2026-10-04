@@ -1,6 +1,6 @@
 # Cockpit H (full canopy): mockup, assets and build plan
 
-Status (2026-10-04): the mockup round is done and the user picked a design, cockpit H. The asset set below is waiting for the user's approval. Nothing is built into the game yet, and `src/` is untouched. The UI working agreement goes mockup with variations, then all the UI's assets for approval, then the build.
+Status (2026-10-04, round 3): the user picked cockpit H, reviewed its asset set and asked for a smaller pilot against the ship. This round has three `world_scale` options with the eye fitted from a seated pilot, a fuller left pod, and an updated asset set and plan. The user picks the scale and approves the assets. Nothing is built into the game yet, and `src/` is untouched. The UI working agreement goes mockup with variations, then all the UI's assets for approval, then the build.
 
 The idea: in the VR internal view you sit inside your own ship. The player's real ship model is drawn double-sided around the eye, with a cabin cut into it. Built geometry adds a canopy frame, a rear bulkhead and a roll hoop, plus a dash with diegetic instruments, and the floating HUD panel goes away. By default the cockpit follows ship yaw and pitch but stays level in banks.
 
@@ -12,11 +12,21 @@ Precedent is the Star Fox cockpit (`starfox-enhanced` 99712f5, 82fd741, ddee4ff,
 | --- | --- |
 | Design | A hybrid: C1's slim teardrop frame (thin struts, raked windscreen) with C2's dash (full-width shell, two angled pods at ±27°, the nose clear, a weapon readout). C1's centre binnacle and all of C3 are dropped |
 | Weapon readout | It has to suit the slim frame (C1 has no heavy header), with the 0.41 m refocus in mind. My choice is below |
-| world_scale | Stays 128 |
-| Eye | The game's own point, `ship_cockpit()` = (0, -128, 0), unchanged |
+| world_scale | Stays 128 (superseded in round 3, below) |
+| Eye | The game's own point, `ship_cockpit()` = (0, -128, 0), unchanged (superseded in round 3, below) |
 | Shield slot | Keep the shield-pickup timer for now. The slot stays generic, since the user may change it |
 | Banking | All three modes become a setting; level-in-banks is the default |
 | Trim | Sampled from each ship's own textures (all 8), not hand-picked team colours |
+
+## Decisions and feedback (user, 2026-10-04, round 3)
+
+| Topic | Decision |
+| --- | --- |
+| Scale | The 1.8 m reference pilot looked too big for the cockpit under him. Make the cockpit and the camera smaller against the ship, so the pilot fits the hull convincingly: a lower `world_scale`, the cockpit parts re-fitted in metres, and the eye re-derived from a seated pilot. This supersedes "keep the eye height". Show three candidates; the user picks |
+| Left pod | Add the championship lives and keep the lap time and lap record. Add the previous lap times if they fit legibly |
+| Settings page | The bank mode and the eye tweaks (`cockpit_eye_forward_cm`, `cockpit_eye_up_cm`) go on the in-headset settings page. `cockpit_glass` stays config-only |
+| Weapon | It stays on the dash-centre keystone |
+| Trim | anasta's trim stays as the rule produces it, for now |
 
 ## Files
 
@@ -40,15 +50,24 @@ The exporter takes all 8 player ships, track01 (Terramax: track, scenery and sky
 
 ## Coordinates and the eye
 
-Game space is +X right, +Y down, +Z forward, in game units. The eye is the game's own `ship_cockpit()` = (0, -128, 0) in ship space, 128 units above the ship origin. The nose point is (0, 0, 512); the meshes reach z = ±416 to ±425.
+Game space is +X right, +Y down, +Z forward, in game units. The game's internal camera sits at `ship_cockpit()` = (0, -128, 0) in ship space, 128 units above the ship origin. The nose point is (0, 0, 512); the meshes reach z = ±416 to ±425.
 
-The cockpit is authored as part of the ship, in metres at 128 units per metre relative to that eye: r right, u up, f forward. A point (r, u, f) is game (128 r, -128 - 128 u, 128 f). Because the cockpit belongs to the ship, `world_scale` scales the hull, the cockpit and the world together about the eye (lesson 29). So it changes no angle at all. A mono view looks identical at every scale. What changes is how big everything is against your body: stereo depth, head translation, your knees, the eye offset in centimetres. The mockup shows that with a 1.8 m reference pilot drawn at physical size (x-ray in the outside view), plus the implied sizes next to the slider.
+The cockpit is authored in metres for a real pilot, relative to the eye: r right, u up, f forward. Since round 3 it is built at the chosen `world_scale` W (units per metre) with an eye height E (units above the ship origin). A point (r, u, f) is game (W r, -E - W u, W f).
+
+E is fitted from a seated pilot:
+- The tub floor is 0.92 m below the eye (a 0.14 m cushion plus 0.78 m seated eye height).
+- The floor has to clear the bottom of every hull shape by at least 2 cm, over the seat and leg footprint (r -0.22 to +0.22, f -0.30 to +0.50).
+- That gives one eye point for all 8 ships: E = (highest hull bottom in that footprint) + 0.94 W.
+
+The round-2 reference is W = 128 with the game's own E = 128.
+
+Inside the headset the cockpit is part of the ship, so once built it scales with the world about the eye (lesson 29). Changing `world_scale` at runtime then changes no angle, only how big everything is against your body. Choosing W here is different: it decides how big the pilot is against the ship. A smaller W puts a smaller pilot (in game units) in the same hull, sitting deeper.
 
 Eye adjust (fore/aft and height, ±30 cm) is physical, so it maps to `cm / 100 * world_scale` units.
 
 ## Ship dimensions
 
-Measured from the captured triangles. The 8 ships are 4 hull shapes, one per team. Every polygon in `allsh.prm` is flagged single-sided, which is why the cockpit draws the hull double-sided (back faces dimmed, so the inside reads as an interior). The deck is the hull top on the centre line at the eye station (z = 0).
+Measured from the captured triangles. The last two columns are for the game's own eye (round 2); the fitted eyes per `world_scale` are in the next section. The 8 ships are 4 hull shapes, one per team. Every polygon in `allsh.prm` is flagged single-sided, which is why the cockpit draws the hull double-sided (back faces dimmed, so the inside reads as an interior). The deck is the hull top on the centre line at the eye station (z = 0).
 
 | # | Model | Team | Pilot | Tris | L x W x H (units) | L x W x H at 128 u/m | Deck y at z = 0 | Eye above deck |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -63,33 +82,58 @@ Measured from the captured triangles. The 8 ships are 4 hull shapes, one per tea
 
 Widths include the rear pods. All four hulls are low wedges. The deck ridge rises from y ≈ -27 at z = 300 to a peak of -82 around z = -100, just behind the eye, and the fuselage at the eye station is only 0.5 m deep at 128 u/m. The Feisar hull is the most different: it's deeper (down to y = +50) and wider forward. The Qirex hull is a narrow, shallow wedge with a trough along its top. That's why the review shots use ships 0 and 1.
 
-## world_scale: keep 128
+## world_scale: three options (round 3), 100 recommended
 
-My recommendation is to keep the placeholder, 128 units per metre. It makes a ship about 6.6 m long, 2.8 m wide over the pods and 1.3 m tall.
+`build/mockups/cockpit-scale-options.png` compares the round-2 reference (128 with the game's eye) against three fitted options. For each it shows the side view with the 1.8 m pilot (an x-ray, with the ship framed the same at every scale), the forward cockpit view and the look-back view, on Feisar and on AG Systems. AG Systems and Auricom leave the least room above the deck (the tightest hulls). In the page, the scale buttons switch between them.
 
-My real-world assumption is that a WipEout craft is a single-seat racer a bit bigger than an F1 car (5.6 x 2.0 x 0.95 m). The game's own eye point decides it, though, because a pilot has to fit the hull with their eye there:
+The hulls justify 112 to 88. At every scale the deepest seat is set by the same thing: the hull bottom under the seat at y = -3 (Feisar, AG Systems, Auricom). The eye then sits this far above the deck ridge on the tightest hull:
 
-- At 128 a seated pilot fits naturally. The eye is 0.46–0.51 m above the deck, which puts your chest at deck level and your hips inside the fuselage, with the cabin floor 0.92 m below the eye. Your legs run forward under the deck. See the "world_scale 128" side view.
-- At 192 (a 4.4 m ship) the same pilot's legs come out through the hull's underside and the head fills the canopy.
-- At 96 (an 8.8 m ship) the pilot sits low in a tub that's too big.
+| world_scale | Eye above the deck ridge |
+| --- | --- |
+| 112 | 0.34 m |
+| 100 | 0.27 m |
+| 88 | 0.18 m |
+| 80 | 0.10 m |
 
-The rest agrees. Track01 is 2600–3500 units wide, which is 20–27 m: wide, but it fits 8 craft that are 2.8 m wide. The Terramax Venom lap record (57.5 s over a 586,000-unit centre line) averages 80 m/s, about 290 km/h. The chase camera's 1024 units come to 8 m.
+At 80 the head is in the hull and the deck is seen edge-on, so the span stops at 88.
 
-Below about 110 the canopy gets roomy and the ship starts to feel like a bus. Above about 150 the pilot no longer fits the hull. Either way it's one key and easy to try in the headset.
+Checks over all four hulls, looking forward. Eye above the deck is per hull (Feisar, Qirex, AG Systems, Auricom); the floor is the tub floor's game y; the clearances are the nearest part and the nearest hull, from the eye:
+
+| world_scale | Ship length | Eye (game units) | Eye above deck ridge | Floor y | Smallest text | Blocked rays | Poke-through | Nose visible | Nearest part | Nearest hull |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 128 (game eye) | 6.64 m | (0, -128, 0) | 0.47, 0.51, 0.46, 0.45 m | -10.2 | 0.78° | 0 | 0 | 96% | 0.34 m | 0.55 m |
+| 112 | 7.59 m | (0, -108.3, 0) | 0.36, 0.40, 0.34, 0.34 m | -5.3 | 0.78° | 0 | 0 | 100% | 0.34 m | 0.47 m |
+| 100 | 8.50 m | (0, -97.0, 0) | 0.29, 0.34, 0.27, 0.27 m | -5.0 | 0.78° | 0 | 0 | 100% | 0.34 m | 0.42 m |
+| 88 | 9.66 m | (0, -85.7, 0) | 0.20, 0.26, 0.18, 0.18 m | -4.7 | 0.78° | 0 | 0 | 100% | 0.34 m | 0.38 m |
+
+The text sizes and the nearest-part distances don't move, because the cockpit is in metres and the dash sits in the cabin opening (see cockpit H). The hull only comes closer. The nearest frame part is the canopy header, 0.34 m from the eye, at every option.
+
+| world_scale | Ship | Track width | Lap-record pace | IPD in game units (64 mm) |
+| --- | --- | --- | --- | --- |
+| 112 | 7.6 x 3.2 x 1.5 m | 23–31 m | 330 km/h | 7.2 |
+| 100 | 8.5 x 3.6 x 1.6 m | 26–35 m | 370 km/h | 6.4 |
+| 88 | 9.7 x 4.1 x 1.9 m | 30–40 m | 420 km/h | 5.6 |
+| 128 (round 2) | 6.6 x 2.8 x 1.3 m | 20–27 m | 290 km/h | 8.2 |
+
+The lap-record pace is Terramax Venom: 57.5 s over a 586,000-unit centre line.
+
+My recommendation is 100. The pilot sits properly inside the hull: hips at the hull bottom, the eye 0.27–0.34 m above the deck, head and shoulders under a canopy that's now low on the ship, in the side view. Forward, the nose is still a clear aiming line ahead of the dash; at 88 it flattens into a thin strip seen nearly edge-on, and the dash and deck fill more of the lower view. 112 is a modest change from round 2: the pilot still sits fairly high (0.34–0.40 m above the deck). At 100 the ship comes to 8.5 m, the size of a big single-seat racer, and the track is wide for 8 of them abreast.
+
+Stereo: the IPD is physical (the runtime's eye poses), so in game units it shrinks with `world_scale`. At 100 the eyes are 6.4 units apart instead of 8.2, and the world reads 1.28 times bigger in stereo than at 128 (1.45 times at 88). Head movement covers fewer game units too. That's the intent (a smaller pilot in a bigger world), but it also makes the speed feel higher (370 km/h at the lap-record pace). That needs judging in the headset.
 
 ## Components (shared)
 
-Dimensions are at 128 u/m. Units are game units (metres x 128).
+Dimensions are in metres, eye-relative. Units are game units at the recommended `world_scale` 100 (metres x 100), with the eye at (0, -97, 0).
 
-| Component | Size and placement | Units |
+| Component | Size and placement | Units at 100 |
 | --- | --- | --- |
-| Cabin cut-out | A box from r -0.34 to +0.34, f -0.36 to +0.25 (behind the seat to just ahead of the chest), from the floor up. Hull polygons are clipped against it, keeping the parts outside it (uv and colour interpolated). 5 (Qirex) to 11 (Feisar) polygons drop out entirely | x ±43.5, z -46 to +32, y < -10 |
-| Tub | Four walls from the floor up to the hull surface, ray-cast per ship, so the tub never shows outside the hull. Floor 0.02 m thick, 0.92 m below the eye | floor y = -10 |
+| Cabin cut-out | A box from the floor up. Hull polygons are clipped against it, keeping the parts outside it (uv and colour interpolated). Round 1 (C1–C3): r ±0.34, f -0.36 to +0.25, behind the seat to just ahead of the chest. H (round 3): r ±0.38, f -0.36 to +0.62, opened forward over the legs, so the dash sits in the opening | H: x ±38.5, z -36 to +62, y < -6 |
+| Tub | Four walls from the floor up to the hull surface, ray-cast per ship, so the tub never shows outside the hull. Floor 0.02 m thick, 0.92 m below the eye, at least 2 cm above every hull's bottom (that's how the eye is fitted) | floor y = -5 |
 | Coaming | A rim along the cut edge, on the hull surface, with a trim stripe (`trim_primary`) on the sides: 3.5 x 2.5 / 6 x 4 / 3 x 2 cm (C1/C2/C3) | 4.5 x 3.2 / 7.7 x 5.1 / 3.8 x 2.6 |
 | Seat | Cushion 0.42 wide, 0.46 deep, 0.14 tall. Back reclined to 0.30 below the eye | |
 | Rear bulkhead | 0.05 thick at f -0.40, 0.80–0.84 wide, from the floor to the eye height minus 0.06 / 0.00 / 0.10 (C1/C2/C3). A headrest tower (0.26 wide) rises to 0.10 above the eye and carries a 0.20 x 0.22 pad. Trim cap (`trim_primary`). Clearance from the eye is 0.34 m | z = -51 to -58 |
 | Roll hoop | At f -0.42: posts from the bulkhead's top corners (r ±0.37) to the canopy rail tips (r ±0.27, u +0.30), with a crossbar between the tips. 3.0 / 5.5 / 3.2 cm square. This is the Star Fox 1d68555 load path, so the canopy frame visibly lands on the cabin | z = -54 |
-| Canopy sill | On the hull deck, ray-cast per ship. Half-width 0.41 at the head, narrowing toward the front | |
+| Canopy sill | On the hull deck, ray-cast per ship. Round 1: half-width 0.41 at the head, narrowing toward the front. H: 0.43 (5 cm outside the opening) back from the front of the opening, narrowing to 0.27 at the windscreen's foot, 0.85 m ahead | |
 | Glass | Faint tint (4.5% plus a fresnel edge) inside, stronger in the outside view. Never an occluder in the checks | |
 
 Instruments are the game's HUD content, drawn with the game's own font, `speedo.tim`, the speedo bar table and `wicons`. They're laid out in HUD pixels (hud.c's units before `ui_scale`), with a size per variation in mm per HUD pixel:
@@ -99,6 +143,8 @@ Instruments are the game's HUD content, drawn with the game's own font, `speedo.
 - Lap: "LAP n OF 3".
 - Position: "POSITION n".
 - Lap time: the current lap time in the 16 px font, then "LAP RECORD" and the record in the 8 px font.
+- Previous laps (H, round 3): up to two earlier lap times in the 8 px font, accent colour, 10 px apart, as `hud_draw` shows them above the current time.
+- Lives (H, round 3): one `UI_ICON_STAR` (`drfonts.cmp` #9, 12 x 12 px) per life, 13 px apart, as `hud_draw` shows them in championship races (`NUM_LIVES` 3).
 - Weapon: the current `wicons` icon in a frame.
 
 ## Cockpit H: the approved design
@@ -109,11 +155,13 @@ H is C1's frame on C2's dash. The canopy is C1's slim teardrop:
 - A-pillars to a header at (0, +0.345, +0.08), so the header sits above and slightly ahead of your head rather than in front of you;
 - top rails back to the roll hoop, which lands on the bulkhead.
 
-Under it sits C2's dash: a full-width shell (r ±0.40, low in the middle at 0.455 m below the eye, resting on the deck) carrying two angled pods.
+Under it sits C2's dash: a full-width shell carrying two angled pods. The shell spans the cabin opening, r ±0.38, 0.455 m below the eye in the middle, with its underside 0.52 m below the eye, above the knees.
+
+In round 3, H's cabin opening runs forward over the legs to f +0.62 and widens to ±0.38, and the dash sits in it. That keeps the instruments and the nose clear at every fitted scale. At 100 the deck is only 0.27–0.34 m under the eye, and the round-2 dash, which stood on the deck, would have been inside the hull. The canopy sill moves out to 5 cm beyond the opening.
 
 The pods are 0.28 x 0.16 m, slightly bigger than C2's, so each face can be one texture. They're centred at (±0.235, -0.335, +0.47): 0.62 m from the eye, 33° down and about 27° to each side. Each has a glareshield lip with a `trim_secondary` edge.
 
-- Left pod: LAP, POSITION and the lap time with the lap record.
+- Left pod: LAP n OF 3 and POSITION across the top. The championship lives sit under POSITION. The two previous lap times sit above the current lap time and the lap record, as the game stacks them. All of it fits at the 8 px floor; nothing had to be dropped.
 - Right pod: the speedo (speed and thrust) over the status slot, which shows the shield timer for now.
 
 The nose runs clear between them, with 96–100% of the ridge visible.
@@ -159,12 +207,14 @@ The faces are drawn the way the build will draw them, with the game's own fonts 
 | --- | --- | --- | --- | --- |
 | Left pod | LAP n OF 3 | (18, 18) | x2 | `UI_SIZE_8` accent and `UI_SIZE_16`, from `drfonts.cmp` |
 | Left pod | POSITION n | (334, 18) | x2 | `UI_SIZE_8` accent and `UI_SIZE_16` |
+| Left pod | Lives (championship) | (412, 92) | x2 | `UI_ICON_STAR` per life, from `drfonts.cmp` |
+| Left pod | Previous laps | (65, 154) | x2 | up to 2 times in `UI_SIZE_8` accent |
 | Left pod | Lap time | (61, 202) | x2 | `UI_SIZE_16`, then LAP RECORD and the record in `UI_SIZE_8` |
 | Right pod | Speedo | (58, 30) | x3 | `hud_draw_speedo`'s bars and the `speedo.tim` facia |
-| Right pod | Status slot | (180, 190) | x3 | "SHIELD" in `UI_SIZE_8` plus 8 segments, from the shield timer |
+| Right pod | Status slot | (160, 190) | x3 | "SHIELD" in `UI_SIZE_8` plus 8 segments, from the shield timer |
 | Weapon | Weapon icon | (10, 10) | x3 | the `wicons.cmp` icon (32 px) in a frame |
 
-The smallest text, 8 px at x2, is 0.78° from the eye; the shield label at x3 is 1.21°.
+The smallest text, 8 px at x2 (the labels, the previous laps and the record), is 0.78° from the eye; the shield label at x3 is 1.21°. The stars are 12 px at x2: 13 mm, or 1.2°.
 
 `build/mockups/cockpit-hybrid-sheet.png` shows H on all four hulls (forward, look left, look back, outside) plus the three bank modes on the same turn.
 
@@ -197,10 +247,11 @@ The weakest case is anasta, a mostly white hull with 1% saturated area. The rule
 
 ## Geometry data for the build
 
-`tools/mockup/cockpit_geometry.json` (format `wipeout-vr-cockpit-geometry/1`, about 390 kB, 99 parts, 7,700 triangles over the four hulls) is what the build consumes. It holds:
+`tools/mockup/cockpit_geometry.json` (format `wipeout-vr-cockpit-geometry/1`, about 230 kB) is what the build consumes. It's exported at `world_scale` 100, the recommendation: 90 parts, about 1,430 triangles per hull and 4,660 over the four hulls. It holds:
 
-- Ship space in game units with the game's own axes (+y down, +z forward), the eye (0, -128, 0) and reference scale 128.
-- The cabin cut box: x ±44.16, y < -11.52 (open top), z -46.08 to +32. The build clips the player's hull against it at load.
+- Ship space in game units with the game's own axes (+y down, +z forward).
+- `world_scale` (100) and the fitted eye (0, -97, 0), which replaces `ship_cockpit()` in the cockpit view, plus the fit rule.
+- The cabin cut box: x ±38.5, y < -6 (open top), z -36 to +62. The build clips the player's hull against it at load.
 - The hull shapes, with the model names and captured triangle counts used to match a ship to its shape: Feisar sophia/jacko, Qirex solaar/arian, AG Systems chang/Dekka, Auricom arial/anasta. With no match, the build draws no cockpit.
 - Material slots: `frame`, `frame_dark`, `cabin`, `cabin_dark`, `seat`, `bezel`, `glass`, `trim_primary` and `trim_secondary`. The fixed slots carry an authored default; the trim slots are sampled.
 - The trim rule as parameters and steps. No sampled colour is stored.
@@ -208,11 +259,21 @@ The weakest case is anasta, a mostly white hull with 1% saturated area. The rule
 - The three faces: corners in ship space, texture size, texel size, and elements with texel position and `ui_scale`.
 - The parts, one per line: name, component group (the mockup's toggles), slot, `hulls` (`"all"` or one hull id), and triangle vertices.
 
-The parts are authored geometry only. No game mesh, texture or pixel is in the file. The parts that follow the deck (tub wall tops, sill rails, dash shell feet, the A-pillar feet, the glass's lower edge) were fitted to each hull by ray casting in the mockup. So those vertices imply a few dozen deck heights per hull, but nothing of the hull itself.
+The parts are authored geometry only. No game mesh, texture or pixel is in the file. The parts that follow the deck (tub wall tops, sill rails, the A-pillar feet, the glass's lower edge) were fitted to each hull by ray casting in the mockup. So those vertices imply a few dozen deck heights per hull, but nothing of the hull itself.
+
+The part sizes depend on the chosen `world_scale`. The cockpit is sized in metres for a real pilot, so in game units it's built for one scale, and the eye and the deck-following parts are fitted at that scale. When the user picks a scale, the data is regenerated for it at dev time, on a machine with the user's game data and the mockup page built:
+
+```
+tools/mockup/build.sh <data_root>                                     # page from the user's data
+python3 tools/mockup/export_cockpit_geometry.py --world-scale 112     # refit, rewrites cockpit_geometry.json
+python3 tools/mockup/export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc
+```
+
+Both outputs get committed, and neither holds game data. In the headset, `world_scale` stays a setting. Moving it away from the fitted value scales the whole cockpit with the ship and the world (it's in ship units), so the pilot-to-hull fit only holds at the fitted value. That's why the setting's default becomes the chosen scale.
 
 Recommendation: keep the JSON as the committed, reviewable source, and compile it into C tables rather than parsing JSON at runtime. That's the Star Fox pattern (`generate_cockpit_assets.py` writing `cockpit_assets.inc`).
 
-`export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc` writes the table: slot enum and default colours, hull model table, part table (`group`, `slot`, `hull_mask`, triangle range), faces, face elements and one flat vertex array. Today it writes `build/cockpit/vr_cockpit_geometry.inc` (540 kB of C, which compiles cleanly with `-Wall`), and the build will commit its output under `src/vr/`. No JSON parser, no file IO, no new dependency. The vertex array could be deduplicated or quantised to int16 later if the binary size matters; 7,700 triangles x 36 bytes is about 280 kB.
+`export_cockpit_geometry.py --from-json --c src/vr/vr_cockpit_geometry.inc` writes the table: slot enum and default colours, hull model table, part table (`group`, `slot`, `hull_mask`, triangle range), faces, face elements and one flat vertex array. Today it writes `build/cockpit/vr_cockpit_geometry.inc` (330 kB of C, which compiles cleanly with `-Wall`, with `VR_COCKPIT_WORLD_SCALE` and `VR_COCKPIT_EYE_Y` defines), and the build will commit its output under `src/vr/`. No JSON parser, no file IO, no new dependency. The vertex array is 4,660 triangles x 36 bytes, about 170 kB.
 
 ## Implementation plan (not started)
 
@@ -221,6 +282,10 @@ Everything lives behind `WIPEOUT_VR`, with the flat build unchanged (`tools/veri
 ### When the cockpit draws
 
 It draws in a stereo race frame (`render_vr_race_view(true)`), when the player's ship has `SHIP_VIEW_INTERNAL` and the camera is `camera_update_race_internal`, and `vr.cockpit` is on. The attract mode, the chase view, the intro fly-over and the mono panel keep today's behaviour.
+
+### Eye point
+
+The cockpit view uses the fitted eye, `VR_COCKPIT_EYE_Y` from the table (game y -97 at 100), not `ship_cockpit()`'s -128. The game's own camera position stays as it is for the game: `camera_update_race_internal` still sets it, and the sim and sound keep using it. The VR anchor adds the difference in ship space, (0, -97 - (-128), 0) through the ship matrix, the same way `head_translation` is composed today (`vr_math.c`). The eye offsets (`cockpit_eye_forward_cm`, `cockpit_eye_up_cm`) add to that in physical centimetres, so they apply live without rebuilding any geometry. The sprite facing and the distance fade then use the eye, as they already do (section 5 of the architecture doc).
 
 ### Load (`ships_load`, one fenced call)
 
@@ -242,7 +307,7 @@ Where `ships_draw` skips the internal-view ship, it calls `vr_cockpit_draw(ship)
 4. Pushes the three face quads with a new `VR_CMD_FACE` command.
 5. Pushes the glass last, with depth write off and normal blend at alpha 0.045.
 
-The parts are 2,180 triangles per hull, recorded into the frame's command list like any other draw. They replay per eye with no per-eye game work. The cockpit's nearest geometry is 0.34 m (43 units at 128), so the near plane of 16 units (`NEAR_PLANE`, 0.125 m) is fine.
+The parts are about 1,430 triangles per hull, recorded into the frame's command list like any other draw. They replay per eye with no per-eye game work. The cockpit's nearest geometry is 0.34 m (34 units at 100), so the near plane of 16 units (`NEAR_PLANE`, 0.16 m at 100) is fine.
 
 ### Instrument faces (the game's own 2D UI into small textures)
 
@@ -250,6 +315,7 @@ The parts are 2,180 triangles per hull, recorded into the frame's command list l
 2. In cockpit mode, `race.c`'s 2D section calls `vr_cockpit_hud_draw(ship)` instead of `hud_draw(ship)`.
 3. That function brackets each face with `render_vr_face_begin(id)` / `render_vr_face_end()`. In between it calls the same code `hud_draw` uses, with `ui_set_scale(n)` and texel positions: `ui_draw_text`, `ui_draw_number`, `ui_draw_time`, the speedo, the weapon icon.
 4. The speedo and the icon list are static in `hud.c`, so `hud.c` gets a fenced `hud_draw_speedo_at(pos, scale)` and `hud_weapon_icon(type)`.
+   The left pod also draws the previous lap times and, in championship races, the lives: the same `ui_draw_time` and `ui_draw_icon(UI_ICON_STAR)` calls `hud_draw` makes, at face positions.
 5. The recorder tags those 2D commands with a face flag and index. The replay draws each face's commands once per frame into its FBO, with an orthographic projection over the face's texels, before the eye passes.
 6. `VR_CMD_FACE(id)` in the 3D segment then draws the face quad with that texture, per eye.
 
@@ -261,7 +327,7 @@ The floating HUD quad is not drawn in cockpit mode. The target reticle and WRONG
 
 ### Bank modes (`vr_math.c`, `vr_render_gl.inc`)
 
-A new port key, `vr.cockpit_bank` = `level` | `follow` | `cockpit` (default `level`), replaces the anchor rule while the cockpit is active. The anchor takes the ship's angles, not the camera's, because the internal camera only takes `internal_roll` (0.6) of the ship's roll. Let E be the eye in world space, `ship_cockpit()` through the full ship matrix, and e = (0, -128, 0) the eye in ship space:
+A new port key, `vr.cockpit_bank` = `level` | `follow` | `cockpit` (default `level`), replaces the anchor rule while the cockpit is active. The anchor takes the ship's angles, not the camera's, because the internal camera only takes `internal_roll` (0.6) of the ship's roll. Let e = (0, `VR_COCKPIT_EYE_Y`, 0) be the fitted eye in ship space and E the same point through the full ship matrix, in world space:
 
 | Mode | Anchor | Cockpit matrix M_c |
 | --- | --- | --- |
@@ -269,24 +335,32 @@ A new port key, `vr.cockpit_bank` = `level` | `follow` | `cockpit` (default `lev
 | `follow` | the ship's full yaw, pitch and roll | the ship's own matrix: the view and cockpit roll together |
 | `cockpit` | yaw and pitch, roll 0 | the ship's own matrix: the cockpit rolls around a level head |
 
-`follow_vehicle_rotation` (the sfvr standard key) keeps governing the chase view. In the cockpit, `cockpit_bank` decides, and the settings page shows the three modes in one row. Steering stays in the ship's frame; WipEout steers in analogue, so the Star Fox 8-way re-projection (lesson 22) isn't needed. That still needs checking in the headset in `follow`.
+`follow_vehicle_rotation` (the sfvr standard key) keeps governing the chase view. In the cockpit, `cockpit_bank` decides. Steering stays in the ship's frame; WipEout steers in analogue, so the Star Fox 8-way re-projection (lesson 22) isn't needed. That still needs checking in the headset in `follow`.
 
-### Settings keys (port keys, `vr_settings.c`)
+### Settings keys (port keys, `vr_settings.c`) and the settings page
 
-| Key | Default | Range | Meaning |
-| --- | --- | --- | --- |
-| `cockpit` | true | bool | The internal view becomes the cockpit; off keeps the flat internal view plus the HUD panel |
-| `cockpit_bank` | `level` | `level`, `follow`, `cockpit` | Bank mode (above) |
-| `cockpit_eye_forward_cm` | 0 | -30..30 | Physical eye offset, `cm / 100 * world_scale` units |
-| `cockpit_eye_up_cm` | 0 | -30..30 | Same, vertical |
-| `cockpit_glass` | true | bool | Canopy glass tint on or off |
-| `world_scale` | 128 | 16..1024 | Now decided rather than a placeholder (doc section 7) |
+| Key | Default | Range | Settings page | Meaning |
+| --- | --- | --- | --- | --- |
+| `cockpit_bank` | `level` | `level`, `follow`, `cockpit` | yes (user, 2026-10-04) | Bank mode (above) |
+| `cockpit_eye_forward_cm` | 0 | -30..30 | yes (user, 2026-10-04) | Physical eye offset from the fitted eye, `cm / 100 * world_scale` units, applied live |
+| `cockpit_eye_up_cm` | 0 | -30..30 | yes (user, 2026-10-04) | Same, vertical |
+| `cockpit_glass` | true | bool | no, config only (user, 2026-10-04) | Canopy glass tint on or off |
+| `cockpit` | true | bool | not decided (open question) | The internal view becomes the cockpit; off keeps the flat internal view plus the HUD panel |
+| `world_scale` | the chosen value (100 recommended) | 16..1024 | as today | The cockpit is fitted at this value (`VR_COCKPIT_WORLD_SCALE`); see "Geometry data". Now decided rather than a placeholder (architecture doc section 7) |
+
+The in-headset settings page (standard section 7; not built yet in this port) gets a Cockpit group with three rows:
+- Bank: Level / Follow / Cockpit banks, cycled with the pad, as the standard's other enum rows are.
+- Eye forward and Eye up: in 1 cm steps, ±30 cm, previewed live in the cockpit behind the panel.
+- A "Reset eye" action that sets both eye offsets back to 0.
+
+Changing these never rebuilds geometry.
 
 ### Tests (host harness, before the first wear session)
 
 - The table matches the JSON: part and triangle counts, and every slot is known.
 - Each of the 8 models matches a shape.
 - After clipping, no hull triangle has a vertex inside the cut box.
+- The fitted eye: the tub floor is at least 2 cm above every hull shape's bottom over the seat footprint.
 - Eye clearance is at least 0.33 m.
 - The eye rays to the face grids hit nothing, as in the mockup's checks.
 - A face replay produces the expected texels for a fixed HUD state.
@@ -295,16 +369,17 @@ A new port key, `vr.cockpit_bank` = `level` | `follow` | `cockpit` (default `lev
 
 Then a wear session (lesson 1): readability, the keystone, the bank modes, and comfort with the hull this close.
 
-## Open questions (asset set)
+## Open questions (round 3)
 
-1. Approve the asset set as shown on the sheet, or call out a component to change.
-2. Weapon readout: the keystone on the dash centre, or project it onto the windscreen top centre (C3's reflector idea, where the game's HUD has it)?
-3. The target reticle and WRONG WAY: draw the reticle at the target's depth (standard section 4), and put WRONG WAY on a pod or the windscreen?
-4. The left pod has room to spare between the position and the lap time. Previous lap times (the game shows them under the current one) or the lives stars in championship mode could go there.
-5. Trim: keep the rule's output as is? In particular, anasta comes out blue-grey with orange.
-6. Should the settings page offer `cockpit_glass` and the eye offsets, or only `cockpit_bank`?
+1. Pick the `world_scale`: 112, 100 or 88 (see the scale options sheet). I recommend 100. The geometry data is exported at 100 now and is regenerated in one command for another pick.
+2. Approve the updated asset set. It now has the cabin opening over the legs with the dash sitting in it, the canopy sill 5 cm outside the opening, and the new left pod with the lives and previous laps.
+3. Does `cockpit` (cockpit on/off) also go on the settings page, or stay config-only like `cockpit_glass`?
+4. The target reticle and WRONG WAY still need a home: the reticle at the target's depth (standard section 4), and WRONG WAY on a pod or the windscreen.
+5. To judge in the headset: the stereo size of the world and the sense of speed at the chosen scale, which comes out at 370 km/h at the lap-record pace at 100.
 
 ## Round 1 variations (C1-C3, kept for comparison)
+
+These are round-1 designs, made for `world_scale` 128 with the game's eye and the shorter cabin opening. Look at them in the page with the "128, game eye" scale button; at the fitted scales their dashes sit too low for the deck. The screenshot script shoots them at that setup (`--variations`).
 
 All three are complete cockpits on the same cabin, bulkhead and hoop. They differ in frame density, dash layout and where the instruments sit. The ship geometry pushed one change into all three: the nose ridge runs straight down the middle of the forward view, from about 15° below the horizon (the tip) to 37° (the deck near the cabin). That's your aiming line, so no dash sits between 15° and 30° on the centre line.
 
@@ -354,14 +429,14 @@ The page recomputes these for the current ship, variation, eye and scale:
 - Eye clearance. The nearest point on the hull and on each part group.
 - Nose ridge. The share of the centre-line ridge, from 0.9 m ahead to the tip, that isn't hidden by cockpit parts.
 
-All the variations, including H, pass on all four hull shapes (ships 0, 1, 3 and 5), looking forward at 128 u/m:
+All the variations pass on all four hull shapes (ships 0, 1, 3 and 5), looking forward. C1–C3 are at 128 u/m with the game's eye; H is at the round-3 recommendation, 100 u/m with the fitted eye (the other scales are in the world_scale section):
 
 | | Smallest text | Blocked | Poke-through | Nose ridge visible | Nearest frame | Nearest hull |
 | --- | --- | --- | --- | --- | --- | --- |
 | C1 | 0.74° | 0 of 120 rays | 0 | 88–92% | 0.34 m (header) | 0.54–0.59 m |
 | C2 | 0.82° | 0 of 120 | 0 | 100% | 0.34 m (spine) | 0.54–0.59 m |
 | C3 | 0.78° | 0 of 120 | 0 | 100% | 0.34 m (bulkhead) | 0.54–0.59 m |
-| H | 0.78° | 0 of 120 | 0 | 96–100% | 0.34 m (header) | 0.54–0.59 m |
+| H (100) | 0.78° | 0 of 160 | 0 | 100% | 0.34 m (header) | 0.42–0.47 m |
 
 At the Frame's roughly 16 px per degree, 0.74° is about 12 px. Every overhead and rear part is at least 0.34 m from the eye. The hull is at least 0.54 m away, which beats the 0.35 m the Star Fox rig test asks for.
 
@@ -375,7 +450,7 @@ The panel has:
 - links to the asset sheet and the hybrid screenshots;
 - cockpit or outside view (cabin in ship, with the reference pilot as an x-ray), plus look presets;
 - eye fore/aft and height;
-- `world_scale` (64–256), with the implied ship size, eye height, track width and speed;
+- the scale options (128 with the game's eye, 112, 100, 88) and a free `world_scale` slider (64–256), refitting the cockpit and the eye, with the implied ship size, eye point, track width and speed;
 - the bank mode;
 - play, speed and lap position;
 - a toggle for every component and instrument;
