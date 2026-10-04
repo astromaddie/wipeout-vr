@@ -41,8 +41,8 @@ SLOTS = {
 }
 
 
-def from_page():
-    dom = shoot.chrome(["--dump-dom", shoot.url("export=geometry")], lambda p: "</html>" in p.read_text(errors="replace"))
+def from_page(world_scale):
+    dom = shoot.chrome(["--dump-dom", shoot.url(f"export=geometry&ws={world_scale}")], lambda p: "</html>" in p.read_text(errors="replace"))
     m = re.search(r'<pre id="export"[^>]*>(.*?)</pre>', dom, re.S)
     if not m or not m.group(1).strip():
         sys.exit("the page did not export geometry (is build/mockups/cockpit-mockup.html current?)")
@@ -79,8 +79,11 @@ def build_json(page):
         "generated_by": "tools/mockup/export_cockpit_geometry.py from tools/mockup/cockpit_mockup.js (variation H)",
         "design": "Cockpit H: C1's slim frame with C2's split dash; approved by the user 2026-10-04",
         "space": "ship space in game units: +x right, +y down, +z forward (the game's own axes, as object_draw uses them)",
-        "eye": [0, -128, 0],
-        "reference_world_scale": 128,
+        "world_scale": page["world_scale"],
+        "eye": page["eye"],
+        "eye_note": "the camera point in ship space; it replaces ship_cockpit() = (0,-128,0) in the cockpit view. Fitted from a seated pilot: tub floor floor_to_eye below it, at least margin above the bottom of every hull shape over the seat footprint",
+        "fit": {"floor_to_eye_m": page["fit"]["floorToEye"], "margin_m": page["fit"]["margin"], "footprint_m": page["fit"]["footprint"]},
+        "regenerate": "the parts are sized in metres for a real pilot, so they depend on world_scale: python3 tools/mockup/export_cockpit_geometry.py --world-scale N (needs the mockup page built from the user's data); the build then regenerates vr_cockpit_geometry.inc with --from-json --c",
         "draw": "every part double-sided (no culling), flat-shaded; glass blended after the opaque parts; faces textured",
         "cabin_cut": {
             "note": "remove the part of the player's hull inside this box (clip polygons, keep the outside parts); y has no upper limit (open top)",
@@ -133,7 +136,8 @@ def write_c(data, out):
         "// Cockpit H geometry in ship space, game units (+y down, +z forward). Do not edit by hand.",
         "// No game data: authored parts only. The player's hull is clipped at runtime (VR_COCKPIT_CUT_*).",
         "",
-        f"#define VR_COCKPIT_EYE_Y ({cf(data['eye'][1])})",
+        f"#define VR_COCKPIT_WORLD_SCALE ({cf(data['world_scale'])}) // units per metre the cockpit was fitted at",
+        f"#define VR_COCKPIT_EYE_Y ({cf(data['eye'][1])}) // the eye in ship space, replaces ship_cockpit()'s -128",
         f"#define VR_COCKPIT_CUT_X0 ({cf(data['cabin_cut']['x'][0])})",
         f"#define VR_COCKPIT_CUT_X1 ({cf(data['cabin_cut']['x'][1])})",
         f"#define VR_COCKPIT_CUT_Y_MAX ({cf(data['cabin_cut']['y_max'])})",
@@ -192,17 +196,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--c", metavar="OUT", help="also write a C table")
     ap.add_argument("--from-json", action="store_true", help="read the committed JSON instead of running the page")
+    ap.add_argument("--world-scale", type=float, default=100, help="world_scale to fit the cockpit at (units per metre); 100 is the recommendation")
     a = ap.parse_args()
     if a.from_json:
         data = json.loads(OUT_JSON.read_text())
     else:
-        data = build_json(from_page())
+        data = build_json(from_page(int(a.world_scale) if a.world_scale == int(a.world_scale) else a.world_scale))
         # one part per line keeps diffs reviewable
         text = json.dumps({k: v for k, v in data.items() if k != "parts"}, indent=1)[:-2]
         text += ',\n "parts": [\n' + ",\n".join("  " + json.dumps(p, separators=(",", ":")) for p in data["parts"]) + "\n ]\n}\n"
         OUT_JSON.write_text(text)
         tris = sum(len(p["tris"]) // 9 for p in data["parts"])
-        print(f"wrote {OUT_JSON.relative_to(HERE.parent.parent)} ({len(data['parts'])} parts, {tris} triangles, {OUT_JSON.stat().st_size / 1e3:.0f} kB)")
+        print(f"wrote {OUT_JSON.relative_to(HERE.parent.parent)} at world_scale {data['world_scale']}, eye {data['eye']} ({len(data['parts'])} parts, {tris} triangles, {OUT_JSON.stat().st_size / 1e3:.0f} kB)")
     if a.c:
         write_c(data, a.c)
 
