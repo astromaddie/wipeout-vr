@@ -224,6 +224,19 @@ void vr_sprite_from_view_rotation(const float rot[9], float out[9]) {
 }
 
 
+void vr_sprite_upright(const float eye_to_world[9], float out[9]) {
+	// Face the eye's forward direction with yaw and pitch only, as the flat game's
+	// sprite_mat does: billboards never roll with the head (standard.md section 4)
+	float f[3] = { -eye_to_world[6], -eye_to_world[7], -eye_to_world[8] };
+	float angles[3] = {
+		-atan2f(f[1], sqrtf(f[0] * f[0] + f[2] * f[2])),
+		-atan2f(f[0], f[2]),
+		0
+	};
+	vr_game_sprite_rotation(angles, out);
+}
+
+
 // -----------------------------------------------------------------------------
 // The rig
 
@@ -293,7 +306,7 @@ void vr_cam_from_pose(const vr_game_camera_t *cam, const vr_rig_t *rig, const vr
 	mat3_transpose(eye_to_world, out->rotation);
 
 	view_from_rotation(out->rotation, out->position, out->view);
-	vr_sprite_from_view_rotation(out->rotation, out->sprite);
+	vr_sprite_upright(eye_to_world, out->sprite);
 }
 
 void vr_views_apply_yaw(vr_view_t views[2], float yaw) {

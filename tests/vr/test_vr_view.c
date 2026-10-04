@@ -177,6 +177,23 @@ static void test_identity_head_gives_the_games_view(void) {
 	}
 }
 
+static void test_sprites_never_roll_with_the_head(void) {
+	// standard.md section 4: a head tilt leaves billboards upright
+	vr_view_t level[2], rolled[2];
+	float q[4] = {0, 0, 0, 1}, head_pos[3] = {0, 1.6f, 0};
+	float r = 0.5f; // about 57 degrees of roll around the view axis
+	float q_roll[4] = {0, 0, sinf(r / 2), cosf(r / 2)};
+	views_at(head_pos, q, 0.064f, level);
+	views_at(head_pos, q_roll, 0.064f, rolled);
+	for (int i = 0; i < ANGLE_SETS; i++) {
+		vr_game_camera_t cam = { .position = {positions[0], positions[1], positions[2]}, .angles = {angle_sets[i][0], angle_sets[i][1], angle_sets[i][2]} };
+		vr_cam_t a, b;
+		centre_cam(&cam, &rig_default, level, -1, &a);
+		centre_cam(&cam, &rig_default, rolled, -1, &b);
+		check_mat(b.sprite, a.sprite, 9, 1e-4);
+	}
+}
+
 static void test_head_yaw_right_looks_at_the_cameras_right(void) {
 	for (int i = 0; i < ANGLE_SETS; i++) {
 		vr_game_camera_t cam = { .position = {100, 200, 300}, .angles = {angle_sets[i][0], angle_sets[i][1], 0} };
@@ -511,6 +528,7 @@ int main(void) {
 	RUN(test_game_matrices_restated);
 	RUN(test_world_is_y_down_z_forward);
 	RUN(test_identity_head_gives_the_games_view);
+	RUN(test_sprites_never_roll_with_the_head);
 	RUN(test_head_yaw_right_looks_at_the_cameras_right);
 	RUN(test_eyes_are_half_the_ipd_apart_along_the_cameras_right);
 	RUN(test_head_translation_scales_the_head_not_the_eyes);

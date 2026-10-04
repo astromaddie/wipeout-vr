@@ -102,6 +102,9 @@ void vr_cam_from_pose(const vr_game_camera_t *cam, const vr_rig_t *rig, const vr
 // Rotation of the billboard that faces a view rotation R: R^T * diag(-1, -1, 1).
 // At roll 0 it equals vr_game_sprite_rotation() of the same angles.
 void vr_sprite_from_view_rotation(const float rot[9], float out[9]);
+// The billboard rotation that faces an eye (its eye-to-game-world rotation) with
+// yaw and pitch only, so sprites never roll with the head. 3x3.
+void vr_sprite_upright(const float eye_to_world[9], float out[9]);
 
 // Rotates `views` about the vertical axis through the head centre (diag_yaw).
 void vr_views_apply_yaw(vr_view_t views[2], float yaw);
