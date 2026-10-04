@@ -13,8 +13,25 @@
 // against the wearer's body (eye adjust in cm, the body reference, IPD).
 'use strict';
 
-const REF = 128;            // units per metre the cockpit is authored at
-const EYE_Y = 128;          // ship_cockpit() = (0,-128,0) in game space
+// The cockpit is sized in metres for a real pilot. REF is the world_scale it
+// is built at (units per metre) and EYE_Y the eye's height above the ship
+// origin in units (three.js +y up; game y = -EYE_Y). Both are set per build:
+// REF = world_scale, and EYE_Y either the game's ship_cockpit() (128) or
+// fitted from a seated pilot whose tub floor stays inside every hull (fitEye).
+let REF = 128;
+let EYE_Y = 128;
+const GAME_EYE_Y = 128;     // ship_cockpit() = (0,-128,0) in game space
+// world_scale candidates (2026-10-04, round 3); 128 with the game's eye is the round-2 reference
+const SCALE_OPTIONS = [
+	{ ws: 128, eye: 'game', label: '128, game eye (round 2)' },
+	{ ws: 112, eye: 'fit', label: '112' },
+	{ ws: 100, eye: 'fit', label: '100 (recommended)' },
+	{ ws: 88, eye: 'fit', label: '88' },
+];
+const RECOMMENDED_WS = 100;
+// the seated pilot: eye 0.92 m above the tub floor (0.14 m cushion + 0.78 m
+// seated eye height), floor at least 2 cm above the hull's bottom
+const FIT = { floorToEye: 0.92, margin: 0.02, footprint: { r: [-0.22, 0, 0.22], f: [-0.30, -0.10, 0.10, 0.30, 0.50] } };
 const D = window.MOCKUP;    // manifest + base64 blobs, see build_cockpit_mockup.py
 const Q = new URLSearchParams(location.search);
 const SHOT = Q.get('shot') === '1';
@@ -184,6 +201,8 @@ function tube(points, wM, dM, hint) {
 		gs.push(beamGeometry(points[i], points[i + 1], wM * REF, dM * REF, h));
 	}
 	for (let i = 1; i + 1 < points.length; i++) {
+		const a = points[i].clone().sub(points[i - 1]).normalize(), b = points[i + 1].clone().sub(points[i]).normalize();
+		if (a.dot(b) > Math.cos(deg(20))) continue;   // gentle bend: the beams overlap enough
 		const s = Math.max(wM, dM) * REF * 1.0;
 		const j = new THREE.BoxGeometry(s, s, s);
 		j.translate(points[i].x, points[i].y, points[i].z);
@@ -425,6 +444,14 @@ const INSTRUMENTS = {
 		drawText(ctx, 'LAP RECORD', 2, 22, '8', UI_ACCENT);
 		drawText(ctx, timeString(57.5), 6 + textWidth('LAP RECORD', '8'), 22, '8', UI_DEFAULT);
 	} },
+	// championship lives: hud.c draws UI_ICON_STAR (drfonts.cmp #9, 12x12) per life, 13 px apart
+	lives: { label: 'Lives (championship)', w: 2 + 13 * 3, h: 14, minText: null, draw(ctx, s) {
+		for (let i = 0; i < s.lives; i++) ctx.drawImage(IMG.star, (1 + 13 * i) * K, 1 * K, 12 * K, 12 * K);
+	} },
+	// previous lap times: hud.c draws them in UI_SIZE_8 accent, 10 px apart, above the current one
+	prevlaps: { label: 'Previous laps', w: 70, h: 20, minText: 8, draw(ctx, s) {
+		for (let i = 0; i < s.prevLaps.length && i < 2; i++) drawText(ctx, timeString(s.prevLaps[i]), 2, 1 + 10 * i, '8', UI_ACCENT);
+	} },
 	weapon: { label: 'Weapon', w: 36, h: 36, minText: null, draw(ctx, s) {
 		ctx.strokeStyle = 'rgba(246,196,24,0.55)';
 		ctx.lineWidth = K * 0.8;
@@ -462,6 +489,7 @@ function sizeInstruments() {
 	I.lap.w = 2 + textWidth('3', '16') + 2 + textWidth('OF', '8') + 2 + textWidth('3', '16') + 6;
 	I.position.w = textWidth('POSITION', '8') + 4;
 	I.laptime.w = Math.max(textWidth('00e00f0', '16'), textWidth('LAP RECORD', '8') + 4 + textWidth('00e57f5', '8')) + 6;
+	I.prevlaps.w = textWidth('00e00f0', '8') + 4;
 }
 
 // --------------------------------------------------------------------------
@@ -489,7 +517,14 @@ const SLOT_EMISSIVE = { trim_primary: 0.25, trim_secondary: 0.25, lens: 0.3 };
 // behind the seat to just ahead of the chest; the legs go forward under the
 // ship's own deck. The eye is 0.92 m above the floor: room for a
 // semi-reclined seat (seated eye height about 0.78 m) on a 0.14 m cushion.
-const CABIN = { halfWidth: 0.34, floor: -0.92, front: 0.25, rear: -0.36 };
+// Round 1 (C1-C3) opened the hull from behind the seat to just ahead of the
+// chest. Cockpit H (round 3) opens it further, to 0.62 m over the legs and
+// ±0.38 m wide, so the dash sits in the opening below the deck line: with the
+// pilot fitted lower at smaller world_scales the deck is close under the eye,
+// and a dash on top of it would hide the instruments and the nose.
+const CABIN_ROUND1 = { halfWidth: 0.34, floor: -0.92, front: 0.25, rear: -0.36 };
+const CABIN_H = { halfWidth: 0.38, floor: -0.92, front: 0.62, rear: -0.36 };
+let CABIN = CABIN_ROUND1;
 
 // H.top(r, f): u of the hull's top surface at (r, f), or null (ray cast on the
 // uncut hull). The tub walls run from the floor up to it, so the tub never
@@ -591,8 +626,12 @@ function pedestal(H, r, f, uTop, w, d) {
 // windscreen from 0.85 m up the deck, top rails back to the roll hoop.
 function slimFrame(add, H) {
 	const t = 0.024;                               // 2.4 cm struts
-	// teardrop canopy: a raked windscreen from far up the deck, rails back to the hoop
-	const cw = (f) => 0.41 - 0.14 * Math.max(0, f - 0.1) / 0.75 - 0.02 * Math.max(0, -f - 0.2) / 0.2;
+	// teardrop canopy: a raked windscreen from far up the deck, rails back to the hoop.
+	// The sill keeps 5 cm outside the cabin opening and narrows only ahead of it.
+	const open = CABIN.front, hw = CABIN.halfWidth + 0.05;
+	const cw = CABIN === CABIN_ROUND1
+		? (f) => 0.41 - 0.14 * Math.max(0, f - 0.1) / 0.75 - 0.02 * Math.max(0, -f - 0.2) / 0.2
+		: (f) => (f <= open ? hw : hw - (hw - 0.27) * Math.min(1, (f - open) / (0.85 - open)));
 	const sL = sillLine(H, cw, 0.85, -0.40, 10);
 	const sR = mirror(sL);
 	const aL = [sL[0], P(-0.32, -0.16, 0.56), P(-0.25, 0.30, 0.10)];   // A-pillar
@@ -643,11 +682,12 @@ function hybridDash(add, H) {
 	}
 	// dash shell: one body across the cabin under both pods, low in the centre
 	// (below the nose line), resting on the hull deck
+	// the shell spans the cabin opening above the knees (bottom 0.52 m below the eye)
 	const dl = (r) => (Math.abs(r) < 0.12 ? -0.455 : -0.455 + (Math.abs(r) - 0.12) * 0.25);
-	const xs = [-0.40, -0.12, 0.12, 0.40];
+	const xs = [-CABIN.halfWidth, -0.12, 0.12, CABIN.halfWidth];
 	for (let i = 0; i + 1 < xs.length; i++) {
 		const r0 = xs[i], r1 = xs[i + 1];
-		const b0 = (H.top(r0, 0.42) ?? CABIN.floor) - 0.03, b1 = (H.top(r1, 0.42) ?? CABIN.floor) - 0.03;
+		const b0 = -0.52, b1 = -0.52;
 		add('dash', hexahedron(
 			[P(r0, b0, 0.58), P(r1, b1, 0.58), P(r1, b1, 0.36), P(r0, b0, 0.36)],
 			[P(r0, dl(r0), 0.58), P(r1, dl(r1), 0.58), P(r1, dl(r1) - 0.01, 0.38), P(r0, dl(r0) - 0.01, 0.38)]), 'cabin');
@@ -663,6 +703,8 @@ function hybridDash(add, H) {
 		instruments: [
 			{ id: 'lap', panel: 'left', tx: 18, ty: 18, scale: 2 },
 			{ id: 'position', panel: 'left', tx: 512 - 18 - 2 * I.position.w, ty: 18, scale: 2 },
+			{ id: 'lives', panel: 'left', tx: 512 - 18 - 2 * I.lives.w, ty: 92, scale: 2 },
+			{ id: 'prevlaps', panel: 'left', tx: Math.round((512 - 2 * I.laptime.w) / 2) + 4, ty: 292 - 2 * I.laptime.h - 26 - 2 * I.prevlaps.h - 8, scale: 2 },
 			{ id: 'laptime', panel: 'left', tx: Math.round((512 - 2 * I.laptime.w) / 2), ty: 292 - 2 * I.laptime.h - 26, scale: 2 },
 			{ id: 'speedo', panel: 'right', tx: Math.round((512 - 3 * I.speedo.w) / 2), ty: 30, scale: 3 },
 			{ id: 'shield', panel: 'right', tx: Math.round((512 - 3 * I.shield.w) / 2), ty: 292 - 3 * I.shield.h - 30, scale: 3 },
@@ -677,7 +719,7 @@ function hybridDash(add, H) {
 
 const VARIATIONS = [
 	{
-		id: 'H', name: 'Hybrid: slim frame, split dash',
+		id: 'H', name: 'Hybrid: slim frame, split dash', cabin: CABIN_H,
 		blurb: "C1's slim teardrop frame with C2's full-width dash: angled pods at ±27°, the nose clear between them, and the weapon on a keystone display between the pods at their focal distance.",
 		build(add, accent, H) {
 			cabinParts(add, accent, H, { rim: 0.035, rimH: 0.025 });
@@ -1017,6 +1059,7 @@ async function main() {
 	await Promise.all(Object.entries(D.png).map(async ([k, v]) => { imgs[k] = await loadImage(v); }));
 	for (const sz of ['16', '12', '8']) FONT[sz] = { img: imgs['hud_font' + sz], glyphs: M.font[sz].glyphs, space: M.font[sz].space, tinted: new Map() };
 	IMG.speedo = imgs.hud_speedo;
+	IMG.star = imgs.hud_icon_star;
 	IMG.wicons = [];
 	for (let i = 0; i < M.wicons; i++) IMG.wicons.push(imgs['hud_wicon_' + i]);
 	sizeInstruments();
@@ -1101,14 +1144,15 @@ async function main() {
 		view: Q.get('view') || 'cockpit',
 		yaw: num('yaw', 0), pitch: num('pitch', 0),
 		eyeF: num('eyef', 0), eyeU: num('eyeu', 0),        // cm, physical
-		ws: num('ws', 128),
+		ws: num('ws', RECOMMENDED_WS),
+		eyeMode: Q.get('eye') === 'game' ? 'game' : 'fit',
 		bank: Q.get('bank') || 'level',
 		at: num('at', 0.60), speed: num('speed', 10000),
 		playing: !SHOT && Q.get('play') !== '0',
 		hover: 220,
 		show: { hull: true, tub: true, sills: true, seat: true, struts: true, glass: true, bulkhead: true, headrest: true, hoop: true, dash: true,
 			podL: true, podR: true, weaponPod: true, body: Q.get('body') === '1',
-			speedo: true, shield: true, lap: true, position: true, laptime: true, weapon: true },
+			speedo: true, shield: true, lap: true, position: true, laptime: true, lives: true, prevlaps: true, weapon: true },
 		orbit: [num('oyaw', -135), num('opitch', 18), num('odist', 4.2)],
 	};
 	for (const k of (Q.get('hide') || '').split(',').filter(Boolean)) S.show[k] = false;
@@ -1151,13 +1195,45 @@ async function main() {
 	const combinerMat = glassMaterial(0.10);
 	const hullMat = gameMaterial(shipTex, 0.55);
 
+	// ---- the eye from a seated pilot: the tub floor (FIT.floorToEye below the
+	// eye) must clear the bottom of every hull shape by FIT.margin over the
+	// seat and leg footprint, so the eye is one point shared by all 8 ships
+	const shapeTris = {};
+	const hullTrisOf = (shipIndex) => {
+		if (!shapeTris[shipIndex]) { const si = M.ships[shipIndex]; shapeTris[shipIndex] = trianglesOf(streamGeometry(ships, si.first, si.count), IDENT); }
+		return shapeTris[shipIndex];
+	};
+	function hullBottom(tris, x, z) {
+		const o = new THREE.Vector3(x, -4000, z), dir = new THREE.Vector3(0, 1, 0);
+		let best = null;
+		for (const t of tris) if (segTri(o, dir, t[0], t[1], t[2], 1e5)) { const y = -4000 + segTriT; if (best === null || y < best) best = y; }
+		return best;
+	}
+	function fitEye(ws) {
+		let need = -Infinity;
+		for (const shipIndex of [0, 1, 3, 5]) {
+			const tris = hullTrisOf(shipIndex);
+			for (const r of FIT.footprint.r) for (const f of FIT.footprint.f) {
+				const b = hullBottom(tris, r * ws, -f * ws);
+				if (b !== null) need = Math.max(need, b);
+			}
+		}
+		return +(need + (FIT.margin + FIT.floorToEye) * ws).toFixed(1);
+	}
+	function applyScale() {
+		REF = S.ws;
+		EYE_Y = S.eyeMode === 'game' ? GAME_EYE_Y : fitEye(S.ws);
+	}
+
 	function build() {
+		applyScale();
 		while (cockpit.children.length) cockpit.remove(cockpit.children[0]);
 		const shipInfo = M.ships[S.ship];
 		const team = PILOT_TEAM[shipInfo.pilot];
 		const trim = TRIM[S.ship];
 		const accent = 'trim_primary';
 		const V = VARIATIONS.find((v) => v.id === S.variation) || VARIATIONS[0];
+		CABIN = V.cabin || CABIN_ROUND1;
 		const parts = [];
 		const add = (group, geo, hex, o) => {
 			// slot: a material slot name (see SLOTS) or, in the older variations, a colour
@@ -1299,7 +1375,7 @@ async function main() {
 	}
 
 	// ---- per-frame pose
-	const state = { lapTime: 31.4, lap: 2, position: 3, weapon: 2, shield: 0, thrust: 60, speedBars: 10 };
+	const state = { lapTime: 31.4, lap: 3, position: 3, weapon: 2, shield: 0, thrust: 60, speedBars: 10, lives: 3, prevLaps: [58.6, 57.9] };
 	FACE_STATE.current = state;
 	function eyeLocal() { return new THREE.Vector3(0, EYE_Y + S.eyeU / 100 * S.ws, -(S.eyeF / 100) * S.ws); }
 
@@ -1348,13 +1424,13 @@ async function main() {
 		if (body) { body.position.copy(eye); body.quaternion.copy(pivot.quaternion); }
 		// outside camera orbits the eye
 		const [oy, op, od] = S.orbit;
-		const dist = od * REF;
+		const dist = od * 128;   // in ship units, so the ship frames the same at every world_scale
 		outsideCam.position.set(
 			eye.x + dist * Math.cos(deg(op)) * Math.sin(deg(oy)),
 			eye.y + dist * Math.sin(deg(op)),
 			eye.z + dist * Math.cos(deg(op)) * Math.cos(deg(oy)));
 		rig.updateMatrixWorld(true);
-		outsideCam.lookAt(new THREE.Vector3(0, EYE_Y - 0.3 * REF, 0).applyMatrix4(rig.matrixWorld));
+		outsideCam.lookAt(new THREE.Vector3(0, EYE_Y - 40, 0).applyMatrix4(rig.matrixWorld));
 		// instrument state, animated
 		const tt = performance.now() / 1000;
 		state.speedBars = THREE.MathUtils.clamp(12.2 - Math.abs(yawRate) * 1.6, 6, 12.6);
@@ -1458,6 +1534,8 @@ async function main() {
 			if (!hit) noseVis++;
 		}
 		res.nose_visible = noseN ? +(noseVis / noseN).toFixed(2) : null;
+		const ridge = built.H.top(0, 0);
+		res.eye = { world_scale: S.ws, mode: S.eyeMode, game: [0, -EYE_Y, 0], above_ridge_m: ridge === null ? null : +(-ridge).toFixed(3), floor_game_y: +(-(EYE_Y + CABIN.floor * REF)).toFixed(1) };
 		res.hull_tris_removed = built.removed;
 		checks = res;
 		document.getElementById('checks').textContent = JSON.stringify(res);
@@ -1471,12 +1549,12 @@ async function main() {
 		const L = (si.max[2] - si.min[2]) / S.ws, Wd = (si.max[0] - si.min[0]) / S.ws, H = (si.max[1] - si.min[1]) / S.ws;
 		const kmh = S.speed / S.ws * 3.6;
 		$('scaleinfo').innerHTML = `ship ${L.toFixed(2)} x ${Wd.toFixed(2)} x ${H.toFixed(2)} m (L x W x H)<br>` +
-			`eye ${(EYE_Y / S.ws).toFixed(2)} m above the hull origin; cabin floor ${(-CABIN.floor * REF / S.ws).toFixed(2)} m below the eye<br>` +
+			`eye (0, ${(-EYE_Y).toFixed(1)}, 0) game units (${S.eyeMode === 'game' ? 'the game\'s ship_cockpit()' : 'fitted, seated pilot'}); ${checks.eye ? checks.eye.above_ridge_m.toFixed(2) : '?'} m above the deck ridge<br>` +
 			`track ~${(2600 / S.ws).toFixed(0)}-${(3500 / S.ws).toFixed(0)} m wide; speed ${kmh.toFixed(0)} km/h`;
 		const team = TEAM_NAME[built.team], pilot = PILOT_NAME[si.pilot];
 		$('caption').textContent = `${built.V.id} ${built.V.name}  |  ${team} (${pilot}, ${si.name})  |  ` +
 			`${S.view === 'outside' ? 'outside' : 'look ' + (Q.get('look') || `${S.yaw.toFixed(0)}/${S.pitch.toFixed(0)}`)}  |  ` +
-			`${S.ws} u/m  |  ${{ level: 'level in banks', follow: 'bank-follow', cockpit: 'cockpit banks, horizon level' }[S.bank]}`;
+			`${S.ws} u/m, eye y ${(-EYE_Y).toFixed(0)}  |  ${{ level: 'level in banks', follow: 'bank-follow', cockpit: 'cockpit banks, horizon level' }[S.bank]}`;
 		$('blurb').textContent = built.V.blurb;
 	}
 
@@ -1527,7 +1605,14 @@ async function main() {
 		};
 		slider('eyef', 'eyeF', (v) => `${v} cm`, () => { buildBody(); runChecks(); });
 		slider('eyeu', 'eyeU', (v) => `${v} cm`, () => { buildBody(); runChecks(); });
-		slider('ws', 'ws', (v) => `${v} u/m`, () => { buildBody(); updateInfo(); runChecks(); });
+		slider('ws', 'ws', (v) => `${v} u/m`, () => { S.eyeMode = 'fit'; build(); syncScale(); });
+		for (const o of SCALE_OPTIONS) {
+			const b = document.createElement('button');
+			b.textContent = o.label; b.dataset.ws = o.ws; b.dataset.eye = o.eye;
+			b.onclick = () => { S.ws = o.ws; S.eyeMode = o.eye; $('ws').value = o.ws; $('wsv').textContent = `${o.ws} u/m`; build(); syncScale(); };
+			$('scales').appendChild(b);
+		}
+		syncScale();
 		slider('speed', 'speed', (v) => `${v} u/s`, updateInfo);
 		slider('at', 'at', (v) => v.toFixed(3));
 		$('bank').value = S.bank;
@@ -1557,6 +1642,7 @@ async function main() {
 		});
 		canvas.addEventListener('wheel', (e) => { if (S.view === 'outside') S.orbit[2] = THREE.MathUtils.clamp(S.orbit[2] * (e.deltaY > 0 ? 1.1 : 0.9), 1, 40); });
 	}
+	function syncScale() { for (const b of $('scales').children) b.classList.toggle('on', +b.dataset.ws === S.ws && b.dataset.eye === S.eyeMode); }
 	function syncTrim() { for (const r of $('trim').children) r.classList.toggle('on', +r.dataset.i === S.ship); }
 	function syncButtons() { for (const b of $('variations').children) b.classList.toggle('on', b.dataset.v === S.variation); }
 
@@ -1652,6 +1738,10 @@ async function main() {
 		const c = CABIN;
 		out.cabin_cut = { x: [-(c.halfWidth + 0.005) * REF, (c.halfWidth + 0.005) * REF], y_max: -(EYE_Y + (c.floor + 0.01) * REF), z: [c.rear * REF, c.front * REF] };
 		out.trim_rule = TRIM_RULE;
+		out.world_scale = S.ws;
+		out.eye = [0, -EYE_Y, 0];
+		out.eye_mode = S.eyeMode;
+		out.fit = FIT;
 		out.instruments = Object.fromEntries(Object.entries(INSTRUMENTS).map(([k, v]) => [k, { label: v.label, size_hud_px: [v.w, v.h], min_text_hud_px: v.minText }]));
 		document.getElementById('export').textContent = JSON.stringify(out);
 		document.title = 'READY';
@@ -1708,7 +1798,7 @@ async function main() {
 			{ g: ['bulkhead'], name: 'Rear bulkhead', note: 'at 0.40 m behind the eye, trim cap', dir: [-0.8, 0.5, -1.2] },
 			{ g: ['headrest'], name: 'Headrest', note: 'tower to +0.10 m, pad', dir: [-0.8, 0.4, -1.2] },
 			{ g: ['hoop'], name: 'Roll hoop', note: 'posts to the strut tips, crossbar; 3 cm', dir: [-1, 0.5, 1] },
-			{ g: ['dash'], name: 'Dash shell', note: 'full width, low centre, on the deck', dir: [-0.6, 0.9, 1.4] },
+			{ g: ['dash'], name: 'Dash shell', note: 'across the cabin opening, above the knees', dir: [-0.6, 0.9, 1.4] },
 			{ g: ['podL'], name: 'Left pod', note: 'bezel, lip with trim edge, face', dir: [0.35, 0.35, 1.2] },
 			{ g: ['podR'], name: 'Right pod', note: 'bezel, lip with trim edge, face', dir: [-0.35, 0.35, 1.2] },
 			{ g: ['weaponPod'], name: 'Weapon display', note: 'keystone on the dash centre, trim surround', dir: [-0.3, 0.3, 1.2] },
@@ -1723,7 +1813,7 @@ async function main() {
 
 		let y = 36;
 		text('WipEout VR, cockpit H (slim frame, split dash): asset sheet for approval', 20, y, 26, '#f0c840', 'bold'); y += 26;
-		text('Ship space, metres at world_scale 128 (game units in brackets). Reference hull: Feisar. Colours are material slots; trim is sampled per ship at runtime. Mockup only, nothing is built.', 20, y, 15, '#9aa3ad'); y += 30;
+		text(`Built at world_scale ${S.ws}: the cockpit is sized in metres for a real pilot, eye fitted at (0, ${(-EYE_Y).toFixed(1)}, 0). Ship space, metres (game units in brackets). Reference hull: Feisar. Colours are material slots; trim is sampled per ship at runtime. Mockup only, nothing is built.`, 20, y, 15, '#9aa3ad'); y += 30;
 		y = heading('Components', y);
 		const cols = 6, gap = 10;
 		COMPONENTS.forEach((c, i) => {
@@ -1782,8 +1872,8 @@ async function main() {
 		y += 10;
 		let x = 20;
 		const faceInfo = {
-			left: ['LAP n OF 3: "LAP", "OF" UI_SIZE_8 accent; digits UI_SIZE_16 (drfonts.cmp), ui_scale 2', 'POSITION n: UI_SIZE_8 accent + UI_SIZE_16, ui_scale 2', 'lap time UI_SIZE_16; LAP RECORD + time UI_SIZE_8, ui_scale 2'],
-			right: ['speed + thrust: hud.c speedo bars + speedo.tim facia, ui_scale 3', 'status slot (generic): now the shield timer,', '"SHIELD" UI_SIZE_8 + 8 segments, ui_scale 3'],
+			left: ['LAP n OF 3, POSITION n: UI_SIZE_8 accent + UI_SIZE_16', 'lives: UI_ICON_STAR (drfonts.cmp #9) per life', 'previous laps: UI_SIZE_8 accent, up to 2 lines', 'lap time UI_SIZE_16; LAP RECORD UI_SIZE_8', 'all at ui_scale 2'],
+			right: ['speed + thrust: hud.c speedo bars', 'and the speedo.tim facia, ui_scale 3', 'status slot (generic): now the shield timer,', '"SHIELD" UI_SIZE_8 + 8 segments, ui_scale 3'],
 			weapon: ['current weapon: wicons.cmp icon (32 px),', 'framed, ui_scale 3; empty frame when none'],
 		};
 		for (const f of built.faces) {
@@ -1798,7 +1888,9 @@ async function main() {
 			// 2x inset
 			x += tw + 40;
 		}
-		y += 292 + 110;
+		y += 292 + 150;
+		text('Lives show in championship races only (3 at the start); previous laps appear from lap 2 (up to 2 lines). Both as hud.c draws them.', 20, y, 12.5, '#9aa3ad');
+		y += 22;
 		text('Element rectangles (texels): ' + built.inst.filter((i) => i.tx !== undefined).map((i) => `${i.id} ${i.panel} @${i.tx},${i.ty} x${i.scale}`).join('; '), 20, y, 12.5, '#9aa3ad');
 		y += 30;
 		const final = document.createElement('canvas'); final.width = W; final.height = y;

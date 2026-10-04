@@ -103,7 +103,9 @@ PANEL = """
   <div class="row"><span>fore/aft</span><input id="eyef" type="range" min="-30" max="30" step="1"> <b id="eyefv"></b></div>
   <div class="row"><span>height</span><input id="eyeu" type="range" min="-30" max="30" step="1"> <b id="eyeuv"></b></div>
   <h3>World scale</h3>
+  <div id="scales"></div>
   <div class="row"><span>world_scale</span><input id="ws" type="range" min="64" max="256" step="4"> <b id="wsv"></b></div>
+  <div class="small">The cockpit is sized for a real pilot at the chosen scale, with the eye fitted so the tub floor clears every hull (except "game eye").</div>
   <div class="small" id="scaleinfo"></div>
   <h3>Bank</h3>
   <select id="bank">
