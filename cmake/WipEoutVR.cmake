@@ -89,6 +89,12 @@ target_compile_definitions(wipeout_vr_core PUBLIC WIPEOUT_VR=1)
 target_compile_options(wipeout_vr_core PRIVATE
 	$<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
 )
+# -ffp-contract=off (lesson 15) for the cockpit's trim rule only: it bins hues, and a fused multiply-add
+# moved samples across a bin edge, so the same data gave different trim in two builds. Not for the
+# rest of the core: test_vr_view compares vr_math with the game's own types.c, which is compiled fused.
+if(NOT MSVC)
+	set_source_files_properties(src/vr/vr_cockpit_core.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 target_link_libraries(wipeout_vr_core PUBLIC sfvr OpenXR::headers m)
 
 

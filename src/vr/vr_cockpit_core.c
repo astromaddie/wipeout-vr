@@ -394,6 +394,10 @@ void vr_cockpit_sample_trim(const vr_cockpit_tri_t *tris, int count, const vr_co
 					rgb[c] = fmin(255.0, TRIM_NO_TEXTURE_TEXEL * vc[c] / 127.5);
 				}
 			}
+			// the colour on screen is 8 bits: round it, so the hue bins do not depend on float noise
+			for (int c = 0; c < 3; c++) {
+				rgb[c] = floor(rgb[c] + 0.5);
+			}
 			total += w;
 			double h, sat, val;
 			rgb_to_hsv(rgb[0], rgb[1], rgb[2], &h, &sat, &val);

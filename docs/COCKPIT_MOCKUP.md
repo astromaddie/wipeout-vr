@@ -314,7 +314,7 @@ The head sits at the fitted eye through the ship's full matrix, `S * e'`, with `
 3. Samples the trim from the ship's own textures. The pixels come from decoding `allsh.cmp` again, copied out of the game's temp memory (eight objects at most) and freed at the end of the load, because the atlas is not read back (lesson 10).
 4. Pre-shades the authored parts: a flat colour per triangle from its slot and the mockup's light in ship space (ambient 0.55, the sun (0.35, 1, 0.45) in the page's axes, the trim slots +0.25, the normal turned toward the fitted eye). The parts are untextured and `RENDER_NO_TEXTURE` is a 128 grey that the shader's x2 makes 1.0, so the vertex colour is the colour on screen.
 
-The trim rule in `vr_cockpit_core.c` is the page's, with one tie-break the page leaves to float rounding: a sample exactly on a texel boundary takes the lower texel, and a sample outside the texture has no texel and is skipped. Without it anasta's orange secondary flipped to violet on one sample (it is 1.35% saturated). Run on the real data it picks, against the page: sophia b39900 / 0000b3 (page the same), solaar 01b275 / 607fb2 (01b374 / 5f7fb3), jacko 0707b2 / b20532 (0707b2 / b20533), chang b38f02 / 321fb3 (b39001 / 3120b3), arian b22c02 / 621801 fallback (b32e04 / 621902), arial b20d0d / 620707 fallback (b30d0d / 620707), anasta 5d7db3 / b27405 (5d7eb3 / b27505), Dekka b38f01 / 00b23f (b38f01 / 00b23f). Every channel is within 3 levels, with the same hues and the same fallbacks.
+The trim rule in `vr_cockpit_core.c` is the page's, with one tie-break the page leaves to float rounding: a sample exactly on a texel boundary takes the lower texel, and a sample outside the texture has no texel and is skipped. Without it anasta's orange secondary flipped to violet on one sample (it is 1.35% saturated). Colours are rounded to 8 bits before the hue is binned, and the core is built with `-ffp-contract=off` (lesson 15), because a fused multiply-add moved samples across hue bin edges and gave different trim in the harness and in the game build. Run on the real data it picks, against the page: sophia b39900 / 0000b2 (page b39900 / 0000b3), solaar 01b274 / 607fb3 (01b374 / 5f7fb3), jacko 0707b3 / b20532 (0707b2 / b20533), chang b38f02 / 321fb3 (b39001 / 3120b3), arian b22c02 / 621801 fallback (b32e04 / 621902 fallback), arial b20d0d / 620707 fallback (b30d0d / 620707 fallback), anasta 5d7cb2 / b27405 (5d7eb3 / b27505), Dekka b38f01 / 00b23f (b38f01 / 00b23f). Every channel is within 3 levels, with the same hues and the same fallbacks.
 
 ### Draw (`ships_draw`, one fenced branch)
 
@@ -373,6 +373,8 @@ All five have defaults, clamping, `WIPEOUT_VR_<KEY>` overrides and a live re-rea
 | harness, with data | the same, `WIPEOUT_VR_TEST_DATA=<root holding wipeout/...>` | All 8 real ships: valid, the right hull shape, no hull vertex in the cabin box, the tub floor at least 2 cm above the hull's bottom over the seat and leg footprint, the trim; then two real cockpits are rendered at the mockup's field of view |
 
 Verified against the approved mockup (`compare_cockpit_render.py`, ships 0 and 1, the cockpit alone on black at the mockup's field of view): 98.7% and 97.7% of the pixels either draws are drawn by both, the mean colour difference is 10 levels and 95% of the pixels are within 32 levels. The faces differ in what they show.
+
+On the Frame (2026-10-04, `deploy.sh --no-register`, the package from the Docker build, the user's data already there): the cockpit module loaded all 8 ships' cockpits at game start (8 of 8, hull shapes and trim logged) and the game ran at 72 fps with 0 to 4 missed frames in the first seconds. No cockpit frame has been dumped: the unattended run sat in the intro and title for the 4 minutes the lock allowed (the title only goes to the attract mode after the intro video, which `force_render` cannot skip), another session was waiting, so the lock was released. The attract diagnostic `diag_attract_cockpit` is in place for the next run (`WIPEOUT_VR_FORCE_RENDER=1 WIPEOUT_VR_DIAG_ATTRACT_STEREO=1 WIPEOUT_VR_DIAG_ATTRACT_COCKPIT=1`, plus `dump_frame`).
 
 Then a wear session (lesson 1): readability, the keystone, the bank modes, and comfort with the hull this close.
 
@@ -443,8 +445,9 @@ All the variations pass on all four hull shapes (ships 0, 1, 3 and 5), looking f
 | C2 | 0.82° | 0 of 120 | 0 | 100% | 0.34 m (spine) | 0.54–0.59 m |
 | C3 | 0.78° | 0 of 120 | 0 | 100% | 0.34 m (bulkhead) | 0.54–0.59 m |
 | H (100) | 0.78° | 0 of 160 | 0 | 100% | 0.34 m (header) | 0.42–0.47 m |
+| H (88, decided) | 0.78° | 0 of 160 | 0 | 100% | 0.34 m (struts, headrest) | 0.38–0.42 m |
 
-At the Frame's roughly 16 px per degree, 0.74° is about 12 px. Every overhead and rear part is at least 0.34 m from the eye. The hull is at least 0.54 m away, which beats the 0.35 m the Star Fox rig test asks for.
+The H (88) row is the final decision, re-run on all four hulls on 2026-10-04 (`checks.json`); it passes. At the Frame's roughly 16 px per degree, 0.74° is about 12 px. Every overhead and rear part is at least 0.34 m from the eye. The hull is at least 0.54 m away, which beats the 0.35 m the Star Fox rig test asks for.
 
 ## The mockup page
 
