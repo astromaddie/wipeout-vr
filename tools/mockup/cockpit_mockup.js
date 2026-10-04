@@ -25,10 +25,10 @@ const GAME_EYE_Y = 128;     // ship_cockpit() = (0,-128,0) in game space
 const SCALE_OPTIONS = [
 	{ ws: 128, eye: 'game', label: '128, game eye (round 2)' },
 	{ ws: 112, eye: 'fit', label: '112' },
-	{ ws: 100, eye: 'fit', label: '100 (recommended)' },
-	{ ws: 88, eye: 'fit', label: '88' },
+	{ ws: 100, eye: 'fit', label: '100' },
+	{ ws: 88, eye: 'fit', label: '88 (decided 2026-10-04)' },
 ];
-const RECOMMENDED_WS = 100;
+const RECOMMENDED_WS = 88; // the user's decision (2026-10-04)
 // the seated pilot: eye 0.92 m above the tub floor (0.14 m cushion + 0.78 m
 // seated eye height), floor at least 2 cm above the hull's bottom
 const FIT = { floorToEye: 0.92, margin: 0.02, footprint: { r: [-0.22, 0, 0.22], f: [-0.30, -0.10, 0.10, 0.30, 0.50] } };
@@ -1675,6 +1675,9 @@ async function main() {
 		renderer.setViewport(vx, vy, vw, vh);
 		renderer.setScissor(vx, vy, vw, vh);
 		renderer.setScissorTest(true);
+		// ?bg=black: the cockpit alone on black, for comparing with the build's harness render
+		world.visible = Q.get('bg') !== 'black';
+		skyScene.visible = Q.get('bg') !== 'black';
 		cam.updateMatrixWorld(true);
 		skyMesh.position.setFromMatrixPosition(cam.matrixWorld).add(new THREE.Vector3(0, -M.sky_y_offset, 0));
 		renderer.render(skyScene, cam);

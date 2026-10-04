@@ -206,7 +206,7 @@ def main():
         res = dict(zip(check_queries, ex.map(checks, check_queries.values())))
     (ROOT / "build" / "mockups" / "checks.json").write_text(json.dumps(res, indent=1))
     by = {j[1].name: (j[1], j[2]) for j in jobs}
-    sub = "Mono approximation of the Frame per-eye view (about 110 x 110 degrees). Cockpit H at world_scale 100 (recommended), eye fitted from a seated pilot. Mockup only; nothing is built."
+    sub = "Mono approximation of the Frame per-eye view (about 110 x 110 degrees). Cockpit H at world_scale 88, eye fitted from a seated pilot."
     rows = [(name, [by[f"H-ship{s}-{v}.png"] for v in ("fwd", "left", "back", "outside")]) for s, name in SHAPES]
     rows.append(("Bank modes (Feisar, same turn)", [(by["H-ship0-fwd.png"][0], "level in banks (default)"), by["H-ship0-bank-follow.png"], by["H-ship0-bank-cockpit.png"]]))
     contact_sheet(rows, ROOT / "build" / "mockups" / "cockpit-hybrid-sheet.png", "WipEout VR cockpit H: slim frame, split dash, on all four hulls", sub, cols=4)
