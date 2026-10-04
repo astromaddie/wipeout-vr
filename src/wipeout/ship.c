@@ -12,6 +12,10 @@
 #include "race.h"
 #include "sfx.h"
 
+#if WIPEOUT_VR
+	#include "../vr/vr_cockpit.h"
+#endif
+
 void ships_load(void) {
 	texture_list_t ship_textures = image_get_compressed_textures("wipeout/common/allsh.cmp");
 	Object *ship_models = objects_load("wipeout/common/allsh.prm", ship_textures);
@@ -35,6 +39,11 @@ void ships_load(void) {
 	}
 
 	error_if(object_index != len(g.ships), "Expected %ld ship models, got %d", len(g.ships), object_index);
+
+	#if WIPEOUT_VR
+		// The VR cockpit: hull clip, trim and parts for every ship, from the models just loaded
+		vr_cockpit_load(ship_textures, "wipeout/common/allsh.cmp");
+	#endif
 
 	uint16_t shadow_textures_start = render_textures_len();
 	image_get_texture_semi_trans("wipeout/textures/shad1.tim");
@@ -153,6 +162,12 @@ void ships_draw(void) {
 			(flags_is(g.ships[i].flags, SHIP_VIEW_INTERNAL) && flags_not(g.ships[i].flags, SHIP_IN_RESCUE)) ||
 			(g.race_type == RACE_TYPE_TIME_TRIAL && i != g.pilot)
 		) {
+			#if WIPEOUT_VR
+				// The internal view's own ship is the cockpit in a stereo race frame
+				if (vr_cockpit_active() && i == g.pilot) {
+					vr_cockpit_draw(&g.ships[i]);
+				}
+			#endif
 			continue;
 		}
 

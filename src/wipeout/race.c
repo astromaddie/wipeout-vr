@@ -17,6 +17,10 @@
 #include "menu.h"
 #include "ingame_menus.h"
 
+#if WIPEOUT_VR
+	#include "../vr/vr_cockpit.h"
+#endif
+
 #define ATTRACT_DURATION 60.0
 
 static bool is_paused = false;
@@ -101,6 +105,8 @@ void race_update(void) {
 	#if WIPEOUT_VR
 		// The race camera: a stereo frame, except in the attract mode's cutting cameras
 		render_vr_race_view(!g.is_attract_mode);
+		// The cockpit view (internal camera): the eyes move to the cockpit's seat
+		vr_cockpit_begin(&g.camera);
 	#endif
 	render_set_view(g.camera.position, g.camera.angle);
 	render_set_screen_position(g.camera.shake);
@@ -123,6 +129,10 @@ void race_update(void) {
 		ui_draw_text("DEMO MODE", ui_scaled_pos(UI_POS_TOP | UI_POS_CENTER, vec2i(-56, 24)), UI_SIZE_8, UI_COLOR_ACCENT);
 	}
 
+	#if WIPEOUT_VR
+		// In the cockpit the instruments are in the pods, so the floating HUD is not drawn
+		if (!vr_cockpit_hud_draw(&g.ships[g.pilot]))
+	#endif
 	if (flags_is(g.ships[g.pilot].flags, SHIP_RACING)) {
 		hud_draw(&g.ships[g.pilot]);
 	}

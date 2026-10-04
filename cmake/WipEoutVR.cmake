@@ -94,6 +94,8 @@ target_link_libraries(wipeout_vr_core PUBLIC sfvr OpenXR::headers m)
 
 # The game
 target_sources(wipeout PRIVATE
+	src/vr/vr_cockpit.c
+	src/vr/vr_cockpit.h
 	src/vr/vr.c
 	src/vr/vr.h
 	src/vr/vr_gl.c
@@ -166,16 +168,27 @@ endif()
 # drives the record, replay, HUD alpha and dump paths with a synthetic scene and
 # a fake view provider. Output goes to <build>/vr-harness/.
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
+	# The cockpit tests (tests/vr/vr_cockpit_harness.inc) also link the game's own
+	# image loader, object structs, UI, HUD and the cockpit module, with the
+	# game's globals stubbed in the test.
 	add_executable(vr_render_harness
 		tests/vr/vr_render_harness.c
+		tests/vr/vr_cockpit_harness.inc
 		src/render_gl.c
 		src/types.c
 		src/mem.c
 		src/utils.c
+		src/wipeout/image.c
+		src/wipeout/object.c
+		src/wipeout/ui.c
+		src/wipeout/hud.c
+		src/vr/vr_cockpit.c
 	)
+	set_source_files_properties(src/wipeout/image.c src/wipeout/object.c src/wipeout/ui.c src/wipeout/hud.c
+		PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare;-Wno-unused-parameter")
 	set_property(TARGET vr_render_harness PROPERTY C_STANDARD 11)
 	target_compile_definitions(vr_render_harness PRIVATE WIPEOUT_VR=1 RENDERER_GL)
-	target_include_directories(vr_render_harness PRIVATE src src/vr third_party/sfvr/tests ${GLEW_INCLUDE_DIRS})
+	target_include_directories(vr_render_harness PRIVATE src src/vr tests/vr third_party/sfvr/tests ${GLEW_INCLUDE_DIRS})
 	target_include_directories(vr_render_harness SYSTEM PRIVATE src/libs)
 	target_link_libraries(vr_render_harness PRIVATE wipeout_vr_core GLEW::GLEW SDL2::Main m)
 	if(USE_GLVND AND TARGET OpenGL::OpenGL)

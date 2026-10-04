@@ -255,3 +255,25 @@ void hud_draw(ship_t *ship) {
 		hud_draw_target_icon(ship->weapon_target->position);
 	}
 }
+
+#if WIPEOUT_VR
+void hud_draw_speedo_at(vec2i_t facia_pos, int speed, int thrust) {
+	vec2i_t bar_pos = vec2i(facia_pos.x, facia_pos.y + 5 * ui_get_scale());
+	hud_draw_speedo_bars(&bar_pos, thrust / 65.0, rgba(255, 0, 0, 128));
+	hud_draw_speedo_bars(&bar_pos, speed / 2166.0, rgba(0, 0, 0, 0));
+	render_push_2d(facia_pos, ui_scaled(render_texture_size(speedo_facia_texture)), rgba(128, 128, 128, 255), speedo_facia_texture);
+}
+
+uint16_t hud_weapon_icon(int weapon_type) {
+	return texture_from_list(weapon_icon_textures, weapon_type - 1);
+}
+
+void hud_draw_overlay(ship_t *ship) {
+	if (flags_not(ship->flags, SHIP_DIRECTION_FORWARD)) {
+		ui_draw_text_centered("WRONG WAY", ui_scaled_pos(UI_POS_MIDDLE | UI_POS_CENTER, vec2i(-20, 0)), UI_SIZE_16, UI_COLOR_ACCENT);
+	}
+	if (ship->weapon_target) {
+		hud_draw_target_icon(ship->weapon_target->position);
+	}
+}
+#endif

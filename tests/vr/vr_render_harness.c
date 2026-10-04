@@ -23,8 +23,7 @@
 #include <SDL.h>
 #include <GL/glew.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
+#include <stb_image_write.h> // the implementation is image.c's (the cockpit tests link the game's image loader)
 
 #include "sfvr_test.h"
 #include "types.h"
@@ -75,6 +74,9 @@ static struct {
 	float roll;
 	float pos[3];
 	bool symmetric_fov;
+	float ipd; // metres
+	bool custom_fov; // the cockpit comparison: both eyes get fov_angles
+	float fov_angles[4];
 } fake;
 
 static GLuint make_image(uint32_t w, uint32_t h) {
@@ -91,6 +93,7 @@ static void fake_init(void) {
 	memset(&fake, 0, sizeof(fake));
 	fake.renders = true;
 	fake.pos[1] = 1.6f;
+	fake.ipd = IPD;
 	fake.time_ns = 5000000000LL;
 	uint32_t sizes[VR_SURFACE_COUNT][2] = { {EYE_W, EYE_H}, {EYE_W, EYE_H}, {UI_W, UI_H}, {UI_W, UI_H} };
 	for (int s = 0; s < VR_SURFACE_COUNT; s++) {
@@ -109,6 +112,8 @@ static void fake_reset(void) {
 	fake.pos[0] = fake.pos[2] = 0;
 	fake.pos[1] = 1.6f;
 	fake.symmetric_fov = false;
+	fake.ipd = IPD;
+	fake.custom_fov = false;
 	memset(&fake.layers, 0, sizeof(fake.layers));
 }
 
@@ -127,7 +132,10 @@ static void quat_mul(const float a[4], const float b[4], float out[4]) {
 
 // The fov of an eye; the asymmetric pair has the left eye seeing more to the left
 static void eye_fov(int eye, float fov[4]) {
-	if (fake.symmetric_fov) {
+	if (fake.custom_fov) {
+		memcpy(fov, fake.fov_angles, 4 * sizeof(float));
+	}
+	else if (fake.symmetric_fov) {
 		fov[0] = -1.0f; fov[1] = 1.0f; fov[2] = 1.0f; fov[3] = -1.0f;
 	}
 	else if (eye == 0) {
@@ -158,7 +166,7 @@ static const vr_frame_t *fake_frame(void *user, bool *renders) {
 		vr_view_t *v = &f->views[e];
 		memcpy(v->pose.orientation, q, sizeof(q));
 		// the eye offset (+-ipd/2 along the head's own x) turned by the yaw about +Y
-		float half = (e == 0 ? -0.5f : 0.5f) * IPD;
+		float half = (e == 0 ? -0.5f : 0.5f) * fake.ipd;
 		v->pose.position[0] = fake.pos[0] + c * half;
 		v->pose.position[1] = fake.pos[1];
 		v->pose.position[2] = fake.pos[2] - s * half;
@@ -315,7 +323,7 @@ static void scene_draw(bool with_sky, sky_style_t style, bool objects, bool far_
 static vec3_t reticle_probe[3]; // render_transform() results in the 2D segment
 static vec3_t reticle_world[3];
 
-static void hud_draw(void) {
+static void synthetic_hud_draw(void) {
 	render_set_view_2d();
 	// Partial alpha: white 50%, red 100%, green 25%
 	render_push_2d(vec2i(100, 100), vec2i(200, 100), rgba(255, 255, 255, 128), RENDER_NO_TEXTURE);
@@ -352,7 +360,7 @@ static void run_frame(const frame_opts_t *o) {
 	scene_draw(o->sky, o->sky_style, o->objects, o->far_cube);
 	render_set_screen_position(vec2(0, 0));
 	if (o->hud) {
-		hud_draw();
+		synthetic_hud_draw();
 	}
 
 	render_frame_end();
@@ -634,7 +642,7 @@ static void test_recording_draws_nothing(void) {
 	render_vr_race_view(true);
 	render_set_view(cam_pos, cam_angles);
 	scene_draw(true, SKY_PLAIN, true, false);
-	hud_draw();
+	synthetic_hud_draw();
 	// the game has run; nothing has been drawn yet
 	uint8_t px[64 * 64 * 4];
 	glBindFramebuffer(GL_FRAMEBUFFER, canary_fbo);
@@ -1178,6 +1186,8 @@ static void test_timing_and_dumps(void) {
 
 // -----------------------------------------------------------------------------
 
+#include "vr_cockpit_harness.inc"
+
 int main(int argc, char **argv) {
 	if (argc > 1) {
 		out_dir = argv[1];
@@ -1189,18 +1199,27 @@ int main(int argc, char **argv) {
 		printf("SDL_Init failed: %s\n", SDL_GetError());
 		return 2;
 	}
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-	window = SDL_CreateWindow("vr_render_harness", 0, 0, UI_W, UI_H, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
-	if (!window) {
-		printf("SDL_CreateWindow failed: %s\n", SDL_GetError());
-		return 2;
+	// The VR build asks for a core 4.3 context (the runtime's minimum). Apple stops at 4.1, which
+	// the renderer's GLSL 330 shaders run on, so a Mac developer's run falls back to it.
+	for (int minor = 3; minor >= 1; minor -= 2) {
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+		window = SDL_CreateWindow("vr_render_harness", 0, 0, UI_W, UI_H, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+		if (!window) {
+			printf("SDL_CreateWindow failed: %s\n", SDL_GetError());
+			return 2;
+		}
+		gl_context = SDL_GL_CreateContext(window);
+		if (gl_context) {
+			break;
+		}
+		printf("SDL_GL_CreateContext failed for 4.%d core: %s\n", minor, SDL_GetError());
+		SDL_DestroyWindow(window);
+		window = NULL;
 	}
-	gl_context = SDL_GL_CreateContext(window);
 	if (!gl_context) {
-		printf("SDL_GL_CreateContext failed: %s\n", SDL_GetError());
 		return 2;
 	}
 	SDL_GL_SetSwapInterval(0);
@@ -1227,14 +1246,26 @@ int main(int argc, char **argv) {
 	sprite_texture = render_texture_create(16, 16, magenta);
 	vr_render_detach();
 
-	test_mono_replay_is_the_flat_renderer();
-	test_recording_draws_nothing();
-	test_stereo_frames();
-	vr_render_detach();
-	test_diag_yaw();
-	test_fade_is_measured_from_each_eye();
-	test_force_mono();
-	test_timing_and_dumps();
+	// WIPEOUT_VR_HARNESS_ONLY=cockpit runs just the cockpit tests (a developer's shortcut)
+	const char *only = getenv("WIPEOUT_VR_HARNESS_ONLY");
+	if (!only || strcmp(only, "cockpit") != 0) {
+		test_mono_replay_is_the_flat_renderer();
+		test_recording_draws_nothing();
+		test_stereo_frames();
+		vr_render_detach();
+		test_diag_yaw();
+		test_fade_is_measured_from_each_eye();
+		test_force_mono();
+		test_timing_and_dumps();
+	}
+	test_cockpit_synthetic();
+	data_root = getenv("WIPEOUT_VR_TEST_DATA");
+	if (data_root && data_root[0]) {
+		test_cockpit_real_ships();
+	}
+	else {
+		printf("the real ships: skipped (set WIPEOUT_VR_TEST_DATA to a directory holding wipeout/...)\n");
+	}
 
 	printf("\noutput: %s\n", out_dir);
 	SDL_GL_DeleteContext(gl_context);

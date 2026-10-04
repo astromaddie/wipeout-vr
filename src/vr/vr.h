@@ -30,6 +30,10 @@ bool vr_enabled(void);
 bool vr_exit_requested(void);
 const vr_settings_t *vr_settings(void);
 
+// vr.diag_attract_cockpit: the attract mode's cameras are always the internal one
+// (camera.c), so an unattended run shows the cockpit. False when VR is not running.
+bool vr_diag_attract_cockpit(void);
+
 // vr.probe_seconds: left eye red, right eye blue for that long. Call after
 // vr_init() and before any game code.
 void vr_probe(void);

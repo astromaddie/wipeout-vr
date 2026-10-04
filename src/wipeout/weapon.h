@@ -50,4 +50,8 @@ void weapons_update(void);
 void weapons_draw(void);
 int weapon_get_random_type(int type_class);
 
+#if WIPEOUT_VR
+float weapon_shield_time_left(ship_t *ship); // seconds, 0 without a shield (the cockpit's status slot)
+#endif
+
 #endif

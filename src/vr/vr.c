@@ -64,6 +64,10 @@ const vr_settings_t *vr_settings(void) {
 	return &vr.settings;
 }
 
+bool vr_diag_attract_cockpit(void) {
+	return vr.enabled && setting("diag_attract_cockpit") != 0;
+}
+
 const vr_frame_t *vr_frame(void) {
 	return &vr.xr.frame;
 }
@@ -211,7 +215,8 @@ bool vr_init(void *sdl_window) {
 			.release = provider_release,
 			.submit = provider_submit
 		},
-		.settings = vr.render_settings
+		.settings = vr.render_settings,
+		.live_settings = &vr.settings // the cockpit keys are re-read from it every frame
 	};
 	if (dir[0]) {
 		snprintf(vr.dump_dir, sizeof(vr.dump_dir), "%svr-dumps", dir);

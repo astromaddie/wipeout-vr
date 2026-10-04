@@ -10,6 +10,7 @@
 
 #if WIPEOUT_VR
 	#include "../vr/vr_input.h"
+	#include "../vr/vr.h"
 #endif
 
 void camera_init(camera_t *camera, section_t *section) {
@@ -172,6 +173,13 @@ void camera_update_attract_random(camera_t *camera, ship_t *ship, droid_t *droid
 	flags_rm(ship->flags, SHIP_VIEW_INTERNAL);
 	camera->update_timer = 5;
 	camera->update_func = attract_options[rand() % len(attract_options)];
+	#if WIPEOUT_VR
+		// Diagnostic (vr.diag_attract_cockpit): always the internal camera, flagged as the internal view
+		if (vr_diag_attract_cockpit()) {
+			camera->update_func = camera_update_attract_internal;
+			flags_add(ship->flags, SHIP_VIEW_INTERNAL);
+		}
+	#endif
 
 	(camera->update_func)(camera, ship, droid);
 }

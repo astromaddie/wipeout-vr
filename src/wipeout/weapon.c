@@ -636,3 +636,14 @@ int weapon_get_random_type(int type_class) {
 	}
 }
 
+#if WIPEOUT_VR
+// Seconds of shield left on a ship, 0 without one: the cockpit's status slot shows it
+float weapon_shield_time_left(ship_t *ship) {
+	for (int i = 0; i < weapons_active; i++) {
+		if (weapons[i].active && weapons[i].owner == ship && weapons[i].update_func == weapon_update_shield) {
+			return weapons[i].timer > 0 ? weapons[i].timer : 0;
+		}
+	}
+	return 0;
+}
+#endif
