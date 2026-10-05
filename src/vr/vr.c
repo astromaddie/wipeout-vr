@@ -167,6 +167,7 @@ bool vr_init(void *sdl_window) {
 	vr_xr_api_loader(&api);
 	vr_xr_config_t config = {
 		.app_name = VR_APP_NAME,
+		.eye_size = (int)setting("eye_size"),
 		.resolution_scale = setting("resolution_scale"),
 		.refresh_rate = (int)setting("refresh_rate"),
 		.force_render = setting("force_render") != 0
@@ -195,9 +196,13 @@ bool vr_init(void *sdl_window) {
 		return false;
 	}
 
-	vr_logf("session created: swapchain format 0x%llx (%s), eye %ux%u, resolution_scale %.2f",
+	vr_logf("session created: swapchain format 0x%llx (%s), eye %ux%u (recommended %ux%u, max %ux%u), eye_size %d x resolution_scale %.2f, refresh_rate %d",
 		(long long)vr.xr.color_format, vr.xr.color_srgb ? "sRGB" : "linear RGBA8",
-		vr.xr.eye[0].width, vr.xr.eye[0].height, config.resolution_scale);
+		vr.xr.eye[0].width, vr.xr.eye[0].height, vr.xr.eye_recommended[0][0], vr.xr.eye_recommended[0][1],
+		vr.xr.eye_max[0][0], vr.xr.eye_max[0][1], config.eye_size, config.resolution_scale, config.refresh_rate);
+	if (vr.xr.eye[0].width < vr_xr_scaled_size(vr.xr.eye_recommended[0][0], 0, vr.xr.eye_scale)) {
+		vr_logf("eye size is clamped to the runtime's maximum %ux%u", vr.xr.eye_max[0][0], vr.xr.eye_max[0][1]);
+	}
 	if (vr.xr.color_format != VR_GL_SRGB8_ALPHA8 && vr.xr.color_format != VR_GL_RGBA8) {
 		vr_logf("WARNING: the swapchain format has no alpha channel, so the HUD quad cannot be translucent");
 	}

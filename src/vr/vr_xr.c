@@ -54,18 +54,12 @@ uint32_t vr_xr_scaled_size(uint32_t recommended, uint32_t max, float scale) {
 	return (uint32_t)scaled;
 }
 
-int vr_xr_choose_refresh_rate(const float *rates, uint32_t count, int wanted) {
-	int best = 0;
-	float best_distance = 0;
-	for (uint32_t i = 0; i < count; i++) {
-		int rate = (int)(rates[i] + 0.5f);
-		float distance = fabsf(rates[i] - (float)wanted);
-		if (rate > 0 && (best == 0 || distance < best_distance || (distance == best_distance && rate < best))) {
-			best = rate;
-			best_distance = distance;
-		}
+float vr_xr_eye_scale(uint32_t recommended, int eye_size, float resolution_scale) {
+	float scale = resolution_scale > 0 ? resolution_scale : 1.0f;
+	if (eye_size > 0 && recommended > 0) {
+		scale *= (float)eye_size / (float)recommended;
 	}
-	return best;
+	return scale;
 }
 
 int64_t vr_xr_choose_color_format(const int64_t *formats, uint32_t count, bool *srgb) {
@@ -161,6 +155,7 @@ bool vr_xr_instance_create(vr_xr_t *xr, const vr_xr_api_t *api, const vr_xr_conf
 
 	xr->ext_frame_controller = has_valve;
 	xr->ext_refresh_rate = has_refresh;
+	vr_refresh_init(&xr->refresh, config->refresh_rate);
 
 	bool ok = load_function(xr, "xrGetOpenGLGraphicsRequirementsKHR", &xr->api.get_opengl_graphics_requirements);
 	if (!ok) {
@@ -170,6 +165,9 @@ bool vr_xr_instance_create(vr_xr_t *xr, const vr_xr_api_t *api, const vr_xr_conf
 		if (!load_function(xr, "xrEnumerateDisplayRefreshRatesFB", &xr->api.enumerate_display_refresh_rates) ||
 			!load_function(xr, "xrRequestDisplayRefreshRateFB", &xr->api.request_display_refresh_rate)) {
 			xr->ext_refresh_rate = false;
+		}
+		else {
+			load_function(xr, "xrGetDisplayRefreshRateFB", &xr->api.get_display_refresh_rate); // optional
 		}
 	}
 
@@ -379,8 +377,13 @@ bool vr_xr_session_create(vr_xr_t *xr, const void *graphics_binding) {
 	}
 
 	for (int e = 0; e < 2; e++) {
-		uint32_t w = vr_xr_scaled_size(xr->eye_recommended[e][0], xr->eye_max[e][0], xr->config.resolution_scale);
-		uint32_t h = vr_xr_scaled_size(xr->eye_recommended[e][1], xr->eye_max[e][1], xr->config.resolution_scale);
+		// One scale for both sides keeps the recommended aspect; the images are created at their final size
+		float scale = vr_xr_eye_scale(xr->eye_recommended[e][0], xr->config.eye_size, xr->config.resolution_scale);
+		if (e == 0) {
+			xr->eye_scale = scale;
+		}
+		uint32_t w = vr_xr_scaled_size(xr->eye_recommended[e][0], xr->eye_max[e][0], scale);
+		uint32_t h = vr_xr_scaled_size(xr->eye_recommended[e][1], xr->eye_max[e][1], scale);
 		if (!vr_xr_swapchain_create(xr, &xr->eye[e], w, h)) {
 			return false;
 		}
@@ -419,6 +422,17 @@ void vr_xr_destroy(vr_xr_t *xr) {
 // -----------------------------------------------------------------------------
 // Session state machine
 
+// Asks the runtime for `rate` Hz. False (logged) when it refuses.
+static bool send_refresh_request(vr_xr_t *xr, int rate) {
+	if (!check(xr, xr->api.request_display_refresh_rate(xr->session, (float)rate), "xrRequestDisplayRefreshRateFB")) {
+		return false;
+	}
+	xr->refresh_rate_chosen = rate;
+	return true;
+}
+
+// At session start: log what the runtime offers (SteamVR offers only the rate set for the app
+// in its per-app settings), ask for the best one at or below config.refresh_rate, and arm the fall back.
 static void request_refresh_rate(vr_xr_t *xr) {
 	if (!xr->ext_refresh_rate || xr->config.refresh_rate <= 0) {
 		return;
@@ -433,14 +447,51 @@ static void request_refresh_rate(vr_xr_t *xr) {
 		count = VR_MAX_REFRESH_RATES;
 	}
 
-	int chosen = vr_xr_choose_refresh_rate(rates, count, xr->config.refresh_rate);
+	int chosen = vr_refresh_offer(&xr->refresh, rates, count);
 	if (chosen == 0) {
-		vr_logf("the runtime offers no refresh rates");
+		vr_logf("refresh rate: the runtime offers no refresh rates");
 		return;
 	}
-	if (check(xr, xr->api.request_display_refresh_rate(xr->session, (float)chosen), "xrRequestDisplayRefreshRateFB")) {
-		xr->refresh_rate_chosen = chosen;
-		vr_logf("refresh rate: asked for %d Hz, runtime offers %u rates, requested %d Hz", xr->config.refresh_rate, count, chosen);
+	char list[VR_MAX_REFRESH_RATES * 8 + 1] = "";
+	for (int i = xr->refresh.offered_count - 1; i >= 0; i--) {
+		size_t used = strlen(list);
+		snprintf(list + used, sizeof(list) - used, "%s%d", used ? ", " : "", xr->refresh.offered[i]);
+	}
+	vr_logf("refresh rate: the runtime offers %s Hz", list);
+
+	if (!send_refresh_request(xr, chosen)) {
+		vr_refresh_give_up(&xr->refresh); // quietly stay where the runtime has us
+		return;
+	}
+	vr_logf("refresh rate: asked for %d Hz, runtime offers %u rates, requested %d Hz", xr->config.refresh_rate, count, chosen);
+	if (xr->refresh.offered_count == 1) {
+		vr_logf("refresh rate: only %d Hz is offered, so there is no fall back (set the rate in SteamVR's per-app settings)", chosen);
+	}
+	if (xr->api.get_display_refresh_rate) {
+		float now = 0;
+		if (XR_SUCCEEDED(xr->api.get_display_refresh_rate(xr->session, &now)) && now > 0) {
+			xr->display_refresh_rate = now;
+			vr_logf("refresh rate: in effect now %.0f Hz", now);
+		}
+	}
+}
+
+static void on_refresh_step(vr_xr_t *xr, const vr_refresh_step_t *step) {
+	switch (step->event) {
+		case VR_REFRESH_WINDOW_MISSED:
+			vr_logf("refresh rate: %.1f fps in the last 10 s, below 90%% of %d Hz (%d of %d windows)",
+				step->fps, step->from, step->misses, VR_REFRESH_MISSES);
+			break;
+		case VR_REFRESH_FALL_BACK:
+			vr_logf("refresh rate: %d Hz not held (%.1f and %.1f fps in two 10 s windows, below 90%%): falling back to %d Hz",
+				step->from, step->prev_fps, step->fps, step->to);
+			if (!send_refresh_request(xr, step->to)) {
+				vr_logf("refresh rate: the fall back was refused; staying as it is");
+				vr_refresh_give_up(&xr->refresh);
+			}
+			break;
+		default:
+			break;
 	}
 }
 
@@ -505,6 +556,14 @@ void vr_xr_poll_events(vr_xr_t *xr) {
 				vr_logf("instance loss pending");
 				xr->exit_requested = true;
 				break;
+
+			case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
+				const XrEventDataDisplayRefreshRateChangedFB *e = (const XrEventDataDisplayRefreshRateChangedFB *)&ev;
+				xr->display_refresh_rate = e->toDisplayRefreshRate;
+				vr_logf("display refresh rate changed: %.0f -> %.0f Hz", e->fromDisplayRefreshRate, e->toDisplayRefreshRate);
+				vr_refresh_adopt(&xr->refresh, (int)(e->toDisplayRefreshRate + 0.5f));
+				break;
+			}
 
 			case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
 				// The runtime moves the LOCAL origin (a system recentre). The caller
@@ -618,6 +677,12 @@ bool vr_xr_frame_begin(vr_xr_t *xr) {
 	xr->frame_dt = vr_clock_step(&xr->clock, fs.predictedDisplayTime, vr_xr_sim_active(xr), VR_MAX_DT);
 	xr->frame_open = true;
 	xr->frames_begun++;
+
+	// The fall back counts frames only while worn: focused, rendering, and not a diagnostic run
+	vr_refresh_step_t step;
+	bool worn = xr->focused && xr->frame.should_render && !xr->config.force_render;
+	vr_refresh_frame(&xr->refresh, fs.predictedDisplayTime, worn, &step);
+	on_refresh_step(xr, &step);
 	return true;
 }
 

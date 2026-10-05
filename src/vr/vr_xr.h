@@ -12,6 +12,7 @@
 
 #include "vr_types.h"
 #include "vr_clock.h"
+#include "vr_refresh.h"
 
 // The OpenXR host: instance, system, session lifecycle, spaces, swapchains and
 // the frame loop. It calls the runtime only through vr_xr_api_t, so the
@@ -21,7 +22,7 @@
 #define XR_VALVE_FRAME_CONTROLLER_EXTENSION_NAME "XR_VALVE_frame_controller_interaction"
 
 #define VR_SWAPCHAIN_MAX_IMAGES 8
-#define VR_MAX_REFRESH_RATES 16
+#define VR_MAX_REFRESH_RATES VR_REFRESH_MAX_RATES
 
 #define VR_GL_SRGB8_ALPHA8 0x8C43
 #define VR_GL_SRGB8 0x8C41
@@ -78,6 +79,7 @@ typedef struct {
 	PFN_xrGetOpenGLGraphicsRequirementsKHR get_opengl_graphics_requirements;
 	PFN_xrEnumerateDisplayRefreshRatesFB enumerate_display_refresh_rates;
 	PFN_xrRequestDisplayRefreshRateFB request_display_refresh_rate;
+	PFN_xrGetDisplayRefreshRateFB get_display_refresh_rate; // optional: NULL when the runtime lacks it
 } vr_xr_api_t;
 
 // The runtime through the OpenXR loader (vr_xr_loader.c).
@@ -85,7 +87,8 @@ void vr_xr_api_loader(vr_xr_api_t *api);
 
 typedef struct {
 	const char *app_name;
-	float resolution_scale; // of the runtime's recommended eye size
+	int eye_size; // the eye image's side in pixels before resolution_scale; 0 = the runtime's recommended size
+	float resolution_scale; // a multiplier on eye_size (or on the recommended size when eye_size is 0)
 	int refresh_rate; // Hz to request with XR_FB_display_refresh_rate; 0 = do not
 	bool force_render; // submit layers even when shouldRender is false (diagnostics)
 } vr_xr_config_t;
@@ -121,7 +124,9 @@ typedef struct vr_xr {
 
 	bool ext_frame_controller; // XR_VALVE_frame_controller_interaction is enabled
 	bool ext_refresh_rate; // XR_FB_display_refresh_rate is enabled
-	int refresh_rate_chosen; // Hz, 0 when none was requested
+	int refresh_rate_chosen; // Hz, 0 when none was requested (the first request; a fall back updates it)
+	vr_refresh_t refresh; // the offered rates and the fall-back state (vr_refresh.h)
+	float display_refresh_rate; // Hz in effect as the runtime reports it; 0 until known
 
 	// Session lifecycle. `state` is the last XrSessionState the runtime sent.
 	XrSessionState state;
@@ -131,7 +136,8 @@ typedef struct vr_xr {
 	uint32_t focus_gains; // times FOCUSED was entered
 	uint32_t recentre_requests; // XrEventDataReferenceSpaceChangePending events seen
 
-	// Eye swapchains, recommended size times resolution_scale
+	// Eye swapchains, created at their final size: eye_size (or the recommended size) times resolution_scale
+	float eye_scale; // what the recommended size was multiplied by
 	int64_t color_format;
 	bool color_srgb;
 	uint32_t eye_recommended[2][2]; // width, height
@@ -150,9 +156,10 @@ typedef struct vr_xr {
 // Pure: the swapchain size for a recommended and a maximum size, scaled and clamped to 1..max.
 uint32_t vr_xr_scaled_size(uint32_t recommended, uint32_t max, float scale);
 
-// Pure: picks the rate to request from the enumerated ones: the nearest to
-// `wanted`, the lower one on a tie. 0 when there are none.
-int vr_xr_choose_refresh_rate(const float *rates, uint32_t count, int wanted);
+// Pure: what the runtime's recommended width is multiplied by to reach `eye_size` pixels (a native
+// 2160 whether the runtime recommends 1728 or 2160), times resolution_scale. eye_size 0 gives
+// resolution_scale alone.
+float vr_xr_eye_scale(uint32_t recommended, int eye_size, float resolution_scale);
 
 // Pure: SRGB8_ALPHA8, else SRGB8, else RGBA8 (then *srgb is false); 0 when none is offered.
 int64_t vr_xr_choose_color_format(const int64_t *formats, uint32_t count, bool *srgb);
@@ -178,7 +185,9 @@ bool vr_xr_swapchain_acquire(vr_xr_t *xr, vr_swapchain_t *sc, uint32_t *index);
 bool vr_xr_swapchain_release(vr_xr_t *xr, vr_swapchain_t *sc);
 
 // Drains the runtime's event queue and runs the session state machine:
-//   READY: xrBeginSession (PRIMARY_STEREO) and the refresh-rate request.
+//   READY: xrBeginSession (PRIMARY_STEREO), then the refresh-rate request: the rates
+//   the runtime offers are logged and the best at or below config.refresh_rate asked for.
+//   display refresh rate changed: logged, and adopted as the rate in effect.
 //   STOPPING: xrEndSession.
 //   EXITING, LOSS_PENDING, instance loss: exit_requested.
 //   reference-space change pending: recentre_requests++.
@@ -191,7 +200,9 @@ void vr_xr_poll_events(vr_xr_t *xr);
 void vr_xr_request_exit(vr_xr_t *xr);
 
 // xrWaitFrame, xrBeginFrame and, when shouldRender, xrLocateViews at the
-// predicted display time. Returns false when no frame was begun: the session
+// predicted display time. Each begun frame also feeds the refresh-rate fall back
+// (vr_refresh.h): it counts only while the session is focused and shouldRender is
+// set, never under config.force_render, and may request a lower offered rate. Returns false when no frame was begun: the session
 // is not running, or the runtime failed the wait or begin. When it returns
 // true, vr_xr_frame_end() must follow. Updates `frame` and `frame_dt`.
 bool vr_xr_frame_begin(vr_xr_t *xr);

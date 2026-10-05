@@ -28,6 +28,10 @@ static struct {
 	// What the runtime offers
 	bool offers_gl, offers_valve, offers_refresh;
 	bool refresh_fns_missing;
+	bool refresh_get_missing; // xrGetDisplayRefreshRateFB absent (it is optional)
+	XrResult request_refresh_result;
+	float display_rate; // what xrGetDisplayRefreshRateFB reports
+	int64_t frame_step_ns; // overrides the 72 Hz step of the display time when set
 	float refresh_rates[8];
 	uint32_t refresh_rate_count;
 	int64_t formats[8];
@@ -250,6 +254,12 @@ static XrResult XRAPI_CALL fake_request_refresh_rate(XrSession session, float ra
 	(void)session;
 	fake.request_refresh_calls++;
 	fake.requested_refresh = rate;
+	return fake.request_refresh_result;
+}
+
+static XrResult XRAPI_CALL fake_get_refresh_rate(XrSession session, float *rate) {
+	(void)session;
+	*rate = fake.display_rate;
 	return XR_SUCCESS;
 }
 
@@ -264,6 +274,9 @@ static XrResult XRAPI_CALL fake_get_instance_proc_addr(XrInstance instance, cons
 	}
 	else if (!fake.refresh_fns_missing && strcmp(name, "xrRequestDisplayRefreshRateFB") == 0) {
 		*fn = (PFN_xrVoidFunction)fake_request_refresh_rate;
+	}
+	else if (!fake.refresh_fns_missing && !fake.refresh_get_missing && strcmp(name, "xrGetDisplayRefreshRateFB") == 0) {
+		*fn = (PFN_xrVoidFunction)fake_get_refresh_rate;
 	}
 	return *fn ? XR_SUCCESS : XR_ERROR_FUNCTION_UNSUPPORTED;
 }
@@ -409,7 +422,7 @@ static XrResult XRAPI_CALL fake_wait_frame(XrSession session, const XrFrameWaitI
 	state->predictedDisplayTime = fake.time;
 	state->predictedDisplayPeriod = FRAME_PERIOD_NS;
 	state->shouldRender = fake.should_render ? XR_TRUE : XR_FALSE;
-	fake.time += FRAME_PERIOD_NS;
+	fake.time += fake.frame_step_ns ? fake.frame_step_ns : FRAME_PERIOD_NS;
 	return XR_SUCCESS;
 }
 
@@ -498,6 +511,7 @@ static void log_sink(const char *line) {
 }
 
 static int binding_marker;
+static int host_eye_size; // make_host's config.eye_size; 0 unless a test sets it
 
 // A host with a session, the way vr.c makes one
 static bool make_host(vr_xr_t *xr, float scale, int refresh_rate, bool force_render) {
@@ -505,6 +519,7 @@ static bool make_host(vr_xr_t *xr, float scale, int refresh_rate, bool force_ren
 	fake_api(&api);
 	vr_xr_config_t config = {
 		.app_name = "WipEoutVR test",
+		.eye_size = host_eye_size,
 		.resolution_scale = scale,
 		.refresh_rate = refresh_rate,
 		.force_render = force_render
@@ -543,14 +558,16 @@ static void test_pure_helpers(void) {
 	CHECK_INT(vr_xr_scaled_size(1, 8192, 0.75f), 1);
 	CHECK_INT(vr_xr_scaled_size(0, 8192, 1.0f), 1);
 
-	float rates[] = { 72, 90, 144 };
-	CHECK_INT(vr_xr_choose_refresh_rate(rates, 3, 90), 90);
-	CHECK_INT(vr_xr_choose_refresh_rate(rates, 3, 100), 90);
-	CHECK_INT(vr_xr_choose_refresh_rate(rates, 3, 130), 144);
-	CHECK_INT(vr_xr_choose_refresh_rate(rates, 3, 30), 72);
-	float two[] = { 72, 144 };
-	CHECK_INT(vr_xr_choose_refresh_rate(two, 2, 108), 72); // a tie goes to the lower rate
-	CHECK_INT(vr_xr_choose_refresh_rate(rates, 0, 90), 0);
+	// the display default: eye_size 2160 is the panel's native size whatever the runtime recommends
+	CHECK_NEAR(vr_xr_eye_scale(1728, 2160, 1.0f), 1.25, 1e-6);
+	CHECK_NEAR(vr_xr_eye_scale(2160, 2160, 1.0f), 1.0, 1e-6);
+	CHECK_NEAR(vr_xr_eye_scale(1728, 2160, 0.75f), 0.9375, 1e-6); // resolution_scale multiplies the target
+	CHECK_NEAR(vr_xr_eye_scale(1728, 0, 1.0f), 1.0, 1e-6); // eye_size 0: the recommended size
+	CHECK_NEAR(vr_xr_eye_scale(1728, 0, 0.0f), 1.0, 1e-6);
+	CHECK_NEAR(vr_xr_eye_scale(0, 2160, 1.0f), 1.0, 1e-6);
+	CHECK_INT(vr_xr_scaled_size(1728, 8192, vr_xr_eye_scale(1728, 2160, 1.0f)), 2160);
+	CHECK_INT(vr_xr_scaled_size(2160, 8192, vr_xr_eye_scale(2160, 2160, 1.0f)), 2160);
+	CHECK_INT(vr_xr_scaled_size(1728, 2000, vr_xr_eye_scale(1728, 2160, 1.0f)), 2000); // a smaller maximum wins
 
 	bool srgb;
 	int64_t both[] = { VR_GL_RGBA8, VR_GL_SRGB8, VR_GL_SRGB8_ALPHA8 };
@@ -672,6 +689,38 @@ static void test_session_and_swapchains(void) {
 	CHECK(make_host(&xr, 1.5f, 0, false));
 	CHECK_INT(fake.swapchain_info[0].width, 2592);
 	vr_xr_destroy(&xr);
+
+	// eye_size: the same final size whether the runtime recommends 1728 (the standalone default)
+	// or 2160 (its per-app 2160 setting), and resolution_scale multiplies it
+	fake_reset();
+	host_eye_size = 2160;
+	CHECK(make_host(&xr, 1.0f, 0, false));
+	CHECK_INT(fake.swapchain_info[0].width, 2160);
+	CHECK_INT(fake.swapchain_info[0].height, 2160);
+	CHECK_INT(fake.swapchain_info[1].width, 2160);
+	vr_xr_destroy(&xr);
+
+	fake_reset();
+	fake.recommended[0] = fake.recommended[1] = 2160;
+	CHECK(make_host(&xr, 1.0f, 0, false));
+	CHECK_INT(fake.swapchain_info[0].width, 2160); // not 2700
+	CHECK_INT(fake.swapchain_info[0].height, 2160);
+	CHECK_NEAR(xr.eye_scale, 1.0, 1e-6);
+	vr_xr_destroy(&xr);
+
+	fake_reset();
+	fake.recommended[0] = fake.recommended[1] = 2160;
+	CHECK(make_host(&xr, 0.75f, 0, false));
+	CHECK_INT(fake.swapchain_info[0].width, 1620);
+	vr_xr_destroy(&xr);
+
+	fake_reset();
+	fake.recommended[0] = fake.recommended[1] = 1728;
+	fake.max[0] = fake.max[1] = 2048;
+	CHECK(make_host(&xr, 1.0f, 0, false));
+	CHECK_INT(fake.swapchain_info[0].width, 2048); // clamped to the runtime's maximum
+	vr_xr_destroy(&xr);
+	host_eye_size = 0;
 
 	// no sRGB format at all: RGBA8 with a warning
 	fake_reset();
@@ -1059,12 +1108,22 @@ static void test_refresh_rate_request(void) {
 	CHECK_INT(xr.refresh_rate_chosen, 90);
 	vr_xr_destroy(&xr);
 
-	// 100 asked for, 72/90/144 offered: 90
+	// 100 asked for, 72/90/144 offered: 90, the best at or below
 	fake_reset();
 	CHECK(make_host(&xr, 1.0f, 100, false));
 	push_state(XR_SESSION_STATE_READY);
 	vr_xr_poll_events(&xr);
 	CHECK_NEAR(fake.requested_refresh, 90, 1e-6);
+	vr_xr_destroy(&xr);
+
+	// 120 asked for and offered, with 144 above it: 120, not the nearest-above
+	fake_reset();
+	fake.refresh_rates[0] = 72; fake.refresh_rates[1] = 90; fake.refresh_rates[2] = 120; fake.refresh_rates[3] = 144;
+	fake.refresh_rate_count = 4;
+	CHECK(make_host(&xr, 1.0f, 120, false));
+	push_state(XR_SESSION_STATE_READY);
+	vr_xr_poll_events(&xr);
+	CHECK_NEAR(fake.requested_refresh, 120, 1e-6);
 	vr_xr_destroy(&xr);
 
 	// not offered by the runtime: no request
@@ -1083,6 +1142,183 @@ static void test_refresh_rate_request(void) {
 	push_state(XR_SESSION_STATE_READY);
 	vr_xr_poll_events(&xr);
 	CHECK_INT(fake.request_refresh_calls, 0);
+	vr_xr_destroy(&xr);
+}
+
+// What the Frame did before WipEoutVR had a per-app entry: it offered only 72 Hz
+static void test_refresh_single_rate_logs_once_and_stays(void) {
+	vr_xr_t xr;
+	fake_reset();
+	fake.refresh_rates[0] = 72;
+	fake.refresh_rate_count = 1;
+	fake.display_rate = 72;
+	log_text[0] = '\0';
+	CHECK(make_host(&xr, 1.25f, 120, false));
+	go_focused(&xr);
+	CHECK_NEAR(fake.requested_refresh, 72, 1e-6);
+	CHECK_INT(fake.request_refresh_calls, 1);
+	CHECK(strstr(log_text, "the runtime offers 72 Hz") != NULL);
+	CHECK(strstr(log_text, "only 72 Hz is offered") != NULL);
+	CHECK(strstr(strstr(log_text, "only 72 Hz is offered") + 1, "only 72 Hz is offered") == NULL); // once
+
+	// however slow, nothing more is requested
+	fake.frame_step_ns = 25000000; // 40 Hz
+	for (int i = 0; i < 1200; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1);
+	CHECK(strstr(log_text, "falling back") == NULL);
+	vr_xr_destroy(&xr);
+}
+
+static void test_refresh_fall_back_120_90_72(void) {
+	vr_xr_t xr;
+	fake_reset();
+	fake.refresh_rates[0] = 72; fake.refresh_rates[1] = 90; fake.refresh_rates[2] = 120;
+	fake.refresh_rate_count = 3;
+	fake.display_rate = 120;
+	log_text[0] = '\0';
+	CHECK(make_host(&xr, 1.25f, 120, false));
+	go_focused(&xr);
+	CHECK_NEAR(fake.requested_refresh, 120, 1e-6);
+	CHECK_INT(xr.refresh_rate_chosen, 120);
+	CHECK(strstr(log_text, "the runtime offers 72, 90, 120 Hz") != NULL);
+
+	// 100 fps while worn for two windows: 90 is requested, and the log says so
+	fake.frame_step_ns = 10000000;
+	for (int i = 0; i < 1150; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1); // one window: not yet
+	CHECK(strstr(log_text, "1 of 2 windows") != NULL);
+	for (int i = 0; i < 1000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 2);
+	CHECK_NEAR(fake.requested_refresh, 90, 1e-6);
+	CHECK_INT(xr.refresh_rate_chosen, 90);
+	CHECK(strstr(log_text, "120 Hz not held") != NULL);
+	CHECK(strstr(log_text, "falling back to 90 Hz") != NULL);
+
+	// the runtime confirms the change; it is logged and adopted (no second request)
+	XrEventDataDisplayRefreshRateChangedFB ev = {
+		.type = XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB,
+		.fromDisplayRefreshRate = 120, .toDisplayRefreshRate = 90
+	};
+	push_event(&ev, sizeof(ev));
+	vr_xr_poll_events(&xr);
+	CHECK_NEAR(xr.display_refresh_rate, 90, 1e-6);
+	CHECK(strstr(log_text, "display refresh rate changed: 120 -> 90 Hz") != NULL);
+	CHECK_INT(xr.refresh.rate, 90);
+	CHECK_INT(fake.request_refresh_calls, 2);
+
+	// 70 fps cannot hold 90 either: 72
+	fake.frame_step_ns = 14285714;
+	for (int i = 0; i < 1500; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 3);
+	CHECK_NEAR(fake.requested_refresh, 72, 1e-6);
+	CHECK(strstr(log_text, "falling back to 72 Hz") != NULL);
+
+	// and that is the end of it
+	for (int i = 0; i < 3000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 3);
+	vr_xr_destroy(&xr);
+}
+
+static void test_refresh_fall_back_only_while_worn(void) {
+	vr_xr_t xr;
+	fake_reset();
+	fake.refresh_rates[0] = 72; fake.refresh_rates[1] = 90; fake.refresh_rates[2] = 120;
+	fake.refresh_rate_count = 3;
+	CHECK(make_host(&xr, 1.25f, 120, false));
+	go_focused(&xr);
+	fake.frame_step_ns = 20000000; // 50 fps: far below 108
+
+	// standby: shouldRender false
+	fake.should_render = false;
+	for (int i = 0; i < 2000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1);
+
+	// rendering but without focus (VISIBLE)
+	fake.should_render = true;
+	push_state(XR_SESSION_STATE_VISIBLE);
+	vr_xr_poll_events(&xr);
+	for (int i = 0; i < 2000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1);
+
+	// worn again: it counts
+	push_state(XR_SESSION_STATE_FOCUSED);
+	vr_xr_poll_events(&xr);
+	for (int i = 0; i < 1100; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 2);
+	vr_xr_destroy(&xr);
+
+	// force_render: unattended runs never fall back, even focused and rendering
+	fake_reset();
+	fake.refresh_rates[0] = 72; fake.refresh_rates[1] = 90; fake.refresh_rates[2] = 120;
+	fake.refresh_rate_count = 3;
+	CHECK(make_host(&xr, 1.25f, 120, true));
+	go_focused(&xr);
+	fake.frame_step_ns = 20000000;
+	for (int i = 0; i < 3000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1);
+	vr_xr_destroy(&xr);
+}
+
+static void test_refresh_refusals_degrade_quietly(void) {
+	vr_xr_t xr;
+
+	// the first request is refused (the old Frame behaviour): one log line, no retry, no fall back
+	fake_reset();
+	fake.request_refresh_result = XR_ERROR_FEATURE_UNSUPPORTED;
+	log_text[0] = '\0';
+	CHECK(make_host(&xr, 1.0f, 120, false));
+	go_focused(&xr);
+	CHECK(xr.session_running);
+	CHECK_INT(fake.request_refresh_calls, 1);
+	CHECK_INT(xr.refresh_rate_chosen, 0);
+	fake.frame_step_ns = 25000000;
+	for (int i = 0; i < 1200; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 1);
+	vr_xr_destroy(&xr);
+
+	// a fall back that is refused is not repeated
+	fake_reset();
+	fake.refresh_rates[0] = 72; fake.refresh_rates[1] = 90; fake.refresh_rates[2] = 120;
+	fake.refresh_rate_count = 3;
+	CHECK(make_host(&xr, 1.0f, 120, false));
+	go_focused(&xr);
+	fake.request_refresh_result = XR_ERROR_RUNTIME_FAILURE;
+	fake.frame_step_ns = 20000000;
+	log_text[0] = '\0';
+	for (int i = 0; i < 3000; i++) {
+		CHECK(one_frame(&xr, NULL, 0));
+	}
+	CHECK_INT(fake.request_refresh_calls, 2);
+	CHECK(strstr(log_text, "the fall back was refused") != NULL);
+	vr_xr_destroy(&xr);
+
+	// no xrGetDisplayRefreshRateFB: it is optional
+	fake_reset();
+	fake.refresh_get_missing = true;
+	CHECK(make_host(&xr, 1.0f, 90, false));
+	go_focused(&xr);
+	CHECK_INT(fake.request_refresh_calls, 1);
+	CHECK(xr.api.get_display_refresh_rate == NULL);
 	vr_xr_destroy(&xr);
 }
 
@@ -1175,6 +1411,10 @@ int main(void) {
 	RUN(test_reference_space_change);
 	RUN(test_dt_from_display_time);
 	RUN(test_refresh_rate_request);
+	RUN(test_refresh_single_rate_logs_once_and_stays);
+	RUN(test_refresh_fall_back_120_90_72);
+	RUN(test_refresh_fall_back_only_while_worn);
+	RUN(test_refresh_refusals_degrade_quietly);
 	RUN(test_runtime_failures);
 	RUN(test_destroy_order);
 	RUN(test_log_lines);

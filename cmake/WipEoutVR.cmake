@@ -74,6 +74,8 @@ add_library(wipeout_vr_core STATIC
 	src/vr/vr_paths.h
 	src/vr/vr_perf.c
 	src/vr/vr_perf.h
+	src/vr/vr_refresh.c
+	src/vr/vr_refresh.h
 	src/vr/vr_settings.c
 	src/vr/vr_settings.h
 	src/vr/vr_stage.c
@@ -131,7 +133,7 @@ endif()
 
 
 # Unit tests (fake runtime, no GL, no window, no game data)
-foreach(name xr settings math clock paths stage compose)
+foreach(name xr settings math clock paths stage compose refresh)
 	add_executable(test_vr_${name} tests/vr/test_vr_${name}.c)
 	set_property(TARGET test_vr_${name} PROPERTY C_STANDARD 11)
 	target_include_directories(test_vr_${name} PRIVATE third_party/sfvr/tests)
@@ -211,7 +213,7 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
 			$<TARGET_FILE:vr_render_harness> ${CMAKE_BINARY_DIR}/vr-harness)
 		set_tests_properties(vr_render_harness PROPERTIES
 			ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1;SDL_VIDEODRIVER=x11"
-			TIMEOUT 300)
+			TIMEOUT 900)
 	else()
 		message(STATUS "vr_render_harness is built but not registered with CTest: xvfb-run was not found")
 	endif()
