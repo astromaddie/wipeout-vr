@@ -17,6 +17,13 @@
 
 #define VR_SETTINGS_MAX_KEYS 64
 
+// The file's schema `version`. sfvr's registry is version 1; the port bumps it
+// when it overrides a registry default (see vr_settings.c). Version 2: the
+// refresh_rate default moves from 90 to 120 (and eye_size is new). A file older
+// than this has a refresh_rate that still holds the old default moved to the
+// new one; a value the user changed is kept.
+#define VR_SETTINGS_VERSION 2
+
 typedef struct {
 	double values[VR_SETTINGS_MAX_KEYS]; // effective: file value, then env override
 	double file_values[VR_SETTINGS_MAX_KEYS]; // what the file holds (and save() writes)

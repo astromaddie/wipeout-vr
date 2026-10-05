@@ -28,6 +28,10 @@ static const sfvr_setting_key port_keys[] = {
 	// The phase-1 flat panel: a world-locked quad.
 	{ "panel_distance", SFVR_SETTING_FLOAT, 2.0, 0.8, 20.0, NULL },
 	{ "panel_width", SFVR_SETTING_FLOAT, 2.4, 0.5, 10.0, NULL },
+	// The eye image's width and height in pixels before resolution_scale (a multiplier on it),
+	// whatever size the runtime recommends: the Frame's panel is 2160 square. 0 gives the old
+	// behaviour, the runtime's recommended size times resolution_scale.
+	{ "eye_size", SFVR_SETTING_INT, 2160.0, 0.0, 4096.0, NULL },
 	// Cockpit H (docs/COCKPIT_MOCKUP.md). The first four are for the in-headset
 	// settings page, which does not exist yet; they are read live every frame.
 	// The internal view becomes the cockpit; off keeps the flat internal view
@@ -44,6 +48,29 @@ static const sfvr_setting_key port_keys[] = {
 };
 #define PORT_KEY_COUNT (sizeof(port_keys) / sizeof(port_keys[0]))
 
+// Display defaults (standard.md section 9, decided 2026-10-05): 120 Hz at a native ~2160 eye image.
+// sfvr's registry says refresh_rate 90 and is vendored, so the port overrides that key here
+// (vr_settings_key() hands out this entry instead) and migrates files that stored the old default
+// (migrations[] below). The eye size is the port key eye_size; resolution_scale (sfvr, 1.0) is a
+// multiplier on it.
+static const sfvr_setting_key std_overrides[] = {
+	{ "refresh_rate", SFVR_SETTING_INT, 120.0, 72.0, 144.0, NULL }
+};
+#define STD_OVERRIDE_COUNT (sizeof(std_overrides) / sizeof(std_overrides[0]))
+
+// A key whose default changed: a stored value equal to `old_default` was the default (the file
+// stores every key explicitly), so it moves to the key's current default. Anything else is kept.
+typedef struct {
+	const char *name;
+	double old_default;
+	int version; // the schema version that changed it
+} migration_t;
+
+static const migration_t migrations[] = {
+	{ "refresh_rate", 90.0, 2 }
+};
+#define MIGRATION_COUNT (sizeof(migrations) / sizeof(migrations[0]))
+
 #define ENV_PREFIX "WIPEOUT"
 
 
@@ -54,7 +81,13 @@ size_t vr_settings_count(void) {
 const sfvr_setting_key *vr_settings_key(size_t index) {
 	size_t standard = sfvr_settings_count();
 	if (index < standard) {
-		return sfvr_settings_at(index);
+		const sfvr_setting_key *k = sfvr_settings_at(index);
+		for (size_t i = 0; k && i < STD_OVERRIDE_COUNT; i++) {
+			if (strcmp(k->name, std_overrides[i].name) == 0) {
+				return &std_overrides[i];
+			}
+		}
+		return k;
 	}
 	index -= standard;
 	return index < PORT_KEY_COUNT ? &port_keys[index] : NULL;
@@ -397,7 +430,20 @@ int vr_settings_parse(vr_settings_t *s, const char *text, size_t len) {
 			p.repairs++;
 		}
 	}
-	if (s->file_version < SFVR_SETTINGS_SCHEMA) {
+	if (s->file_version < VR_SETTINGS_VERSION) {
+		// Missing keys already have the new default; a stored old default moves with it.
+		for (size_t m = 0; m < MIGRATION_COUNT; m++) {
+			int index = vr_settings_index(migrations[m].name);
+			if (index < 0 || !p.seen[index] || s->file_version >= migrations[m].version) {
+				continue;
+			}
+			if (same_value(s->file_values[index], migrations[m].old_default)) {
+				vr_logf("settings: %s %g was the old default; now %g (schema %d)",
+					migrations[m].name, migrations[m].old_default, vr_settings_key(index)->def, migrations[m].version);
+				s->file_values[index] = vr_settings_key(index)->def;
+				p.repairs++;
+			}
+		}
 		p.repairs++;
 	}
 	return p.repairs;
@@ -464,8 +510,8 @@ static void format_line(void *user, const char *line, size_t len, int kind, cons
 
 	if (kind == LINE_KEY && table[0] == '\0' && name_is(kv, "version")) {
 		f->have_version = true;
-		if (s->file_version < SFVR_SETTINGS_SCHEMA) {
-			snprintf(text, sizeof(text), "version = %d", SFVR_SETTINGS_SCHEMA);
+		if (s->file_version < VR_SETTINGS_VERSION) {
+			snprintf(text, sizeof(text), "version = %d", VR_SETTINGS_VERSION);
 			f->failed |= !lines_add_at(&f->out, f->out.len, text, strlen(text));
 			return;
 		}
@@ -511,7 +557,7 @@ char *vr_settings_format(const vr_settings_t *s, size_t *out_len) {
 
 	if (!f.have_version) {
 		char text[32];
-		snprintf(text, sizeof(text), "version = %d", SFVR_SETTINGS_SCHEMA);
+		snprintf(text, sizeof(text), "version = %d", VR_SETTINGS_VERSION);
 		size_t at = 0;
 		// after a leading comment block, so a header comment stays on top
 		while (at < f.out.len && f.out.lines[at][0] == '#') {
