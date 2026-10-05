@@ -1172,7 +1172,7 @@ static void test_timing_and_dumps(void) {
 	char line[256] = {0};
 	int emitted = 0;
 	for (int i = 0; i < 1000; i++) {
-		if (vr_perf_frame(&perf, i / 90.0, 1000000000LL + (int64_t)i * FRAME_NS, FRAME_NS, t->record_ms, t->replay_ms, t->hud_ms, t->eye_ms, line, sizeof(line))) {
+		if (vr_perf_frame(&perf, i / 90.0, 1000000000LL + (int64_t)i * FRAME_NS, FRAME_NS, t->record_ms, t->replay_ms, t->hud_ms, t->eye_ms, -1.0f, line, sizeof(line))) {
 			emitted++;
 			printf("  %s\n", line);
 		}
@@ -1180,6 +1180,76 @@ static void test_timing_and_dumps(void) {
 	CHECK_INT(emitted, 1);
 	CHECK(strncmp(line, "[vr-perf] fps=", 14) == 0);
 	CHECK(strstr(line, "record=") && strstr(line, "replay=") && strstr(line, "hud=") && strstr(line, "eye="));
+	vr_render_detach();
+}
+
+
+// -----------------------------------------------------------------------------
+// 5. GPU timing (timing_gpu): timestamp queries, read a few frames late, never waited for
+
+static void test_gpu_timing(void) {
+	printf("gpu timing\n");
+
+	// off: nothing is created, nothing is reported, whatever is drawn
+	fake_reset();
+	vr_render_config_t cfg = make_config(NULL, false);
+	vr_render_attach(&cfg);
+	for (int i = 0; i < 8; i++) {
+		run_frame(i % 2 ? &race_frame : &mono_frame);
+		CHECK(!vr_render_gpu()->enabled);
+		CHECK_INT(vr_render_gpu()->count, 0);
+	}
+	vr_render_detach();
+
+	// on
+	fake_reset();
+	cfg = make_config(NULL, false);
+	cfg.settings.timing_gpu = true;
+	vr_render_attach(&cfg);
+	int total = 0, stereo = 0, mono = 0, frames = 0, first_sample_frame = 0;
+	float eye_max = 0, mono_max = 0, hud_max = 0;
+	for (int i = 0; i < 24; i++) {
+		// 6 stereo frames, then 6 mono frames, then stereo again
+		run_frame((i / 6) % 2 == 0 ? &race_frame : &mono_frame);
+		// llvmpipe is a slow GPU that has no vsync to pace the harness: let it finish each frame,
+		// as the display does for the product, so what is under test is the ring and not the backlog
+		glFinish();
+		frames++;
+		const vr_render_gpu_t *g = vr_render_gpu();
+		if (frames == 1) {
+			CHECK(g->enabled);
+		}
+		if (g->count > 0 && !first_sample_frame) {
+			first_sample_frame = frames;
+		}
+		for (int k = 0; k < g->count; k++) {
+			const vr_render_gpu_sample_t *sample = &g->samples[k];
+			total++;
+			if (sample->stereo) {
+				stereo++;
+				if (sample->eye_ms[0] > eye_max) eye_max = sample->eye_ms[0];
+				if (sample->eye_ms[1] > eye_max) eye_max = sample->eye_ms[1];
+				if (sample->hud_ms > hud_max) hud_max = sample->hud_ms;
+				CHECK(sample->mono_ms == 0);
+				CHECK(sample->eye_ms[0] >= 0 && sample->eye_ms[1] >= 0);
+			}
+			else {
+				mono++;
+				if (sample->mono_ms > mono_max) mono_max = sample->mono_ms;
+				CHECK(sample->eye_ms[0] == 0 && sample->eye_ms[1] == 0 && sample->hud_ms == 0);
+			}
+			CHECK(sample->total_ms >= sample->mono_ms);
+		}
+	}
+	printf("  %d samples (%d stereo, %d mono) from %d frames, first at frame %d; eye max %.3f ms, hud %.3f ms, mono %.3f ms; dropped %u\n",
+		total, stereo, mono, frames, first_sample_frame, eye_max, hud_max, mono_max, vr_render_gpu()->dropped);
+	CHECK(vr_render_gpu()->enabled);
+	// read two to three frames late: nothing in the first two, then about one a frame
+	CHECK(first_sample_frame >= 3 && first_sample_frame <= 5);
+	CHECK(total >= frames - 5);
+	CHECK(stereo > 0 && mono > 0);
+	CHECK(eye_max > 0 && mono_max > 0 && hud_max > 0);
+	glerrors("after gpu timing");
 	vr_render_detach();
 }
 
@@ -1257,6 +1327,7 @@ int main(int argc, char **argv) {
 		test_fade_is_measured_from_each_eye();
 		test_force_mono();
 		test_timing_and_dumps();
+		test_gpu_timing();
 	}
 	test_cockpit_synthetic();
 	data_root = getenv("WIPEOUT_VR_TEST_DATA");

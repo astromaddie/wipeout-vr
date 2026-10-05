@@ -214,7 +214,7 @@ static void test_perf_line(void) {
 		double now = i * (1.0 / 90.0);
 		// frame 300 takes two periods: one missed
 		display += (i == 300) ? 2 * period : period;
-		if (vr_perf_frame(&p, now, display, period, 1.0f, 4.4f, 0.5f, eyes, line, sizeof(line))) {
+		if (vr_perf_frame(&p, now, display, period, 1.0f, 4.4f, 0.5f, eyes, -1.0f, line, sizeof(line))) {
 			emitted++;
 			CHECK(strncmp(line, "[vr-perf] fps=", 14) == 0);
 			CHECK(strstr(line, "missed=1") != NULL);
@@ -227,6 +227,66 @@ static void test_perf_line(void) {
 	CHECK_INT(emitted, 1); // 1000 frames at 90 Hz is 11 s: one 10 s window
 }
 
+// timing_gpu: gpu= is the mean of the frames that had a GPU time, and a second line gives each pass
+static void test_perf_gpu_line(void) {
+	vr_perf_t p;
+	vr_perf_init(&p);
+	char line[256], gpu[256];
+	const float cpu_eyes[2] = { 2.2f, 2.1f };
+	const float eyes_a[2] = { 3.0f, 3.2f };
+	const float eyes_b[2] = { 4.0f, 4.2f };
+	const float none[2] = { 0, 0 };
+	int emitted = 0;
+	int64_t period = 8333333; // 120 Hz
+	int64_t display = 100 * SEC;
+	for (int i = 0; i < 1300; i++) {
+		double now = i * (1.0 / 120.0);
+		display += period;
+		// The queries finish a few frames late and not every frame: every other frame has a sample
+		float gpu_ms = -1.0f;
+		if (i % 2 == 0 && i >= 4) {
+			bool b = (i % 4 == 0);
+			if (i % 10 == 0) { // some mono frames
+				vr_perf_gpu_sample(&p, false, 0, none, 0, 0.5f, 0.5f);
+				gpu_ms = 0.5f;
+			}
+			else {
+				vr_perf_gpu_sample(&p, true, 0.1f, b ? eyes_a : eyes_b, 0.3f, 0, 0.1f + (b ? 6.2f : 8.2f) + 0.3f);
+				gpu_ms = 0.1f + (b ? 6.2f : 8.2f) + 0.3f;
+			}
+		}
+		if (vr_perf_frame(&p, now, display, period, 1.0f, 4.4f, 0.5f, cpu_eyes, gpu_ms, line, sizeof(line))) {
+			emitted++;
+			CHECK(strstr(line, "eye=2.20/2.10ms") != NULL); // the CPU per-eye stays
+			CHECK(strstr(line, "gpu=n/a") == NULL);
+			CHECK(strstr(line, "gpu=") != NULL);
+			vr_perf_gpu_line(&p, gpu, sizeof(gpu));
+			CHECK(strncmp(gpu, "[vr-perf] gpu eye=", 18) == 0);
+			CHECK(strstr(gpu, "eye=3.50/3.70ms") != NULL); // the stereo frames' mean per eye
+			CHECK(strstr(gpu, "face=0.10 hud=0.30 mono=0.50") != NULL);
+			CHECK(strstr(gpu, "max=8.60ms") != NULL);
+			// a window with no GPU frame gives no line at all
+			vr_perf_gpu_line(&p, gpu, sizeof(gpu));
+			CHECK_STR(gpu, "");
+		}
+	}
+	CHECK_INT(emitted, 1);
+
+	// off: nothing is ever fed, gpu= stays n/a and there is no second line
+	vr_perf_init(&p);
+	emitted = 0;
+	for (int i = 0; i < 1300; i++) {
+		display += period;
+		if (vr_perf_frame(&p, i * (1.0 / 120.0), display, period, 1.0f, 4.4f, 0.5f, cpu_eyes, -1.0f, line, sizeof(line))) {
+			emitted++;
+			CHECK(strstr(line, "gpu=n/a") != NULL);
+			vr_perf_gpu_line(&p, gpu, sizeof(gpu));
+			CHECK_STR(gpu, "");
+		}
+	}
+	CHECK_INT(emitted, 1);
+}
+
 int main(void) {
 	RUN(test_cmdlist_orders_and_coalesces);
 	RUN(test_cmdlist_cameras);
@@ -235,5 +295,6 @@ int main(void) {
 	RUN(test_recentre_applies_once_at_a_stereo_frame);
 	RUN(test_panel_is_placed_then_held);
 	RUN(test_perf_line);
+	RUN(test_perf_gpu_line);
 	return SFVR_TEST_RESULT("vr_stage");
 }

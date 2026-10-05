@@ -78,6 +78,28 @@ typedef struct {
 } vr_render_timing_t;
 const vr_render_timing_t *vr_render_timing(void);
 
+// GPU time per pass, from GL timestamp queries (vr.timing_gpu). A frame's queries are read two
+// or three frames later, never waited for (lesson 10), so these describe older frames. Off,
+// nothing is created or queried and this stays empty.
+#define VR_GPU_SAMPLES_MAX 4
+typedef struct {
+	float face_ms; // the instrument-face pass (0 when the frame had none)
+	float eye_ms[2]; // each eye
+	float hud_ms; // the HUD passes and the alpha resolve
+	float mono_ms; // the mono panel
+	float total_ms; // the sum of the above
+	bool stereo; // which kind of frame it was
+} vr_render_gpu_sample_t;
+
+typedef struct {
+	bool enabled; // timing_gpu is on and the context has timestamp queries
+	int count; // samples that finished since the last frame began (usually 1)
+	vr_render_gpu_sample_t samples[VR_GPU_SAMPLES_MAX];
+	uint32_t dropped; // frames whose queries were still not ready when their slot was reused
+} vr_render_gpu_t;
+// Valid after the replay (render_frame_end()) until the next frame begins
+const vr_render_gpu_t *vr_render_gpu(void);
+
 typedef struct {
 	vr_mode_t mode;
 	uint32_t frames_replayed;

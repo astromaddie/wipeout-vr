@@ -45,6 +45,8 @@ static struct {
 	XrCompositionLayerProjectionView probe_views[2];
 
 	vr_perf_t perf;
+	bool display_logged;
+	uint32_t gpu_dropped;
 } vr;
 
 
@@ -319,14 +321,37 @@ void vr_frame_end(void) {
 	}
 	vr_xr_frame_end(&vr.xr, layers, count);
 
-	if (vr.render_settings.timing) {
+	if (vr.render_settings.timing || vr.render_settings.timing_gpu) {
 		const vr_render_timing_t *t = vr_render_timing();
+		const vr_render_gpu_t *gpu = vr_render_gpu();
+		// GPU frames whose queries finished this frame (two or three frames old, usually one)
+		float gpu_ms = -1.0f;
+		for (int i = 0; i < gpu->count; i++) {
+			const vr_render_gpu_sample_t *g = &gpu->samples[i];
+			vr_perf_gpu_sample(&vr.perf, g->stereo, g->face_ms, g->eye_ms, g->hud_ms, g->mono_ms, g->total_ms);
+			gpu_ms = (gpu_ms < 0 ? 0.0f : gpu_ms) + g->total_ms / (float)gpu->count;
+		}
 		char line[256];
 		double now_s = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
 		if (vr_perf_frame(&vr.perf, now_s, vr.xr.frame.predicted_display_time, vr.xr.frame.predicted_display_period,
-			t->record_ms, t->replay_ms, t->hud_ms, t->eye_ms, line, sizeof(line))
+			t->record_ms, t->replay_ms, t->hud_ms, t->eye_ms, gpu_ms, line, sizeof(line))
 		) {
+			if (!vr.display_logged) {
+				vr.display_logged = true;
+				vr_logf("display: rate %.0f Hz in effect (requested %d Hz, wanted %d Hz), eye %ux%u per eye (recommended %ux%u, eye_size %d x scale %.2f)",
+					vr.xr.display_refresh_rate, vr.xr.refresh_rate_chosen, (int)setting("refresh_rate"),
+					vr.xr.eye[0].width, vr.xr.eye[0].height, vr.xr.eye_recommended[0][0], vr.xr.eye_recommended[0][1],
+					(int)setting("eye_size"), setting("resolution_scale"));
+			}
 			printf("%s\n", line);
+			vr_perf_gpu_line(&vr.perf, line, sizeof(line));
+			if (line[0]) {
+				printf("%s\n", line);
+			}
+			if (gpu->enabled && gpu->dropped != vr.gpu_dropped) {
+				vr_logf("gpu timing: %u frames lost (queries not ready in time)", gpu->dropped - vr.gpu_dropped);
+				vr.gpu_dropped = gpu->dropped;
+			}
 			fflush(stdout);
 		}
 	}

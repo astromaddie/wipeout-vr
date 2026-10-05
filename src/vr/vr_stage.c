@@ -18,6 +18,7 @@ void vr_render_settings_from(vr_render_settings_t *out, const vr_settings_t *s) 
 	out->diag_yaw = (float)(vr_settings_get(s, "diag_yaw") * 3.14159265358979323846 / 180.0);
 	out->dump_frame = (int)vr_settings_get(s, "dump_frame");
 	out->timing = vr_settings_get(s, "timing") != 0;
+	out->timing_gpu = vr_settings_get(s, "timing_gpu") != 0;
 	out->ui_width = VR_UI_WIDTH;
 	out->ui_height = VR_UI_HEIGHT;
 	vr_cockpit_settings_from(&out->cockpit, s);

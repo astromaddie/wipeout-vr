@@ -27,6 +27,7 @@ typedef struct {
 	float diag_yaw; // radians
 	int dump_frame; // 0 = off
 	bool timing;
+	bool timing_gpu; // GL timestamp queries around the passes (vr_render_gpu)
 	int ui_width, ui_height; // the 2D layout size: render_size() in VR, and the HUD and panel textures
 	vr_cockpit_settings_t cockpit; // refreshed every frame from the live settings
 } vr_render_settings_t;

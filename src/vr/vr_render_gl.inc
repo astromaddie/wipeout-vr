@@ -39,6 +39,20 @@ _Static_assert(offsetof(vr_vertex_t, color) == offsetof(vertex_t, color), "vr_ve
 static mat4_t render_setup_2d_projection_mat(vec2i_t size);
 static mat4_t render_setup_3d_projection_mat(vec2i_t size);
 
+// GPU timing (vr.timing_gpu): timestamp queries around the passes, kept in a small ring and read
+// two or three frames after they were written, without waiting. A pass is a "span": a begin and an
+// end timestamp. Off, none of it exists.
+#define VR_GPU_RING 4
+enum { VR_SPAN_FACES, VR_SPAN_EYE0, VR_SPAN_EYE1, VR_SPAN_HUD, VR_SPAN_MONO, VR_SPAN_COUNT };
+
+typedef struct {
+	GLuint query[VR_SPAN_COUNT][2]; // begin, end timestamps
+	uint32_t used; // bit per span written this frame
+	bool pending;
+	bool stereo;
+	uint32_t frame; // the replayed-frame number it was written in
+} vr_gpu_slot_t;
+
 typedef struct {
 	GLuint pbo;
 	GLsync fence;
@@ -103,6 +117,13 @@ static struct {
 	vr_dump_slot_t dump_slots[VR_DUMP_SLOTS];
 	uint64_t rec_ns;
 	vr_render_timing_t timing;
+	struct {
+		bool on; // timing_gpu is set and the context can do GL_TIMESTAMP
+		bool ready; // the queries exist
+		vr_gpu_slot_t slots[VR_GPU_RING];
+		vr_gpu_slot_t *cur; // the slot being written this frame
+		vr_render_gpu_t out;
+	} gpu;
 	vr_render_frame_info_t info;
 } vrr;
 
@@ -134,6 +155,152 @@ bool vr_render_active(void) {
 const vr_render_timing_t *vr_render_timing(void) {
 	return &vrr.timing;
 }
+
+const vr_render_gpu_t *vr_render_gpu(void) {
+	return &vrr.gpu.out;
+}
+
+
+// -----------------------------------------------------------------------------
+// GPU timing (vr.timing_gpu)
+
+// Apple's legacy GL headers have no timestamp queries (GL_TIMESTAMP): the stubs below keep that
+// build compiling, and the setting then reports that it is off.
+#ifdef GL_TIMESTAMP
+
+// With the setting off, vrr.gpu.cur stays NULL: every mark below is one pointer test and the
+// queries are never created.
+static void vr_gpu_init(void) {
+	if (!vrr.cfg.settings.timing_gpu) {
+		return;
+	}
+	GLint major = 0, minor = 0, bits = 0;
+	glGetIntegerv(GL_MAJOR_VERSION, &major);
+	glGetIntegerv(GL_MINOR_VERSION, &minor);
+	if (major > 3 || (major == 3 && minor >= 3)) {
+		glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &bits);
+	}
+	if (bits <= 0) {
+		vr_logf("gpu timing: off (the context has no timestamp queries)");
+		return;
+	}
+	GLuint ids[VR_GPU_RING * VR_SPAN_COUNT * 2];
+	glGenQueries((GLsizei)(sizeof(ids) / sizeof(ids[0])), ids);
+	size_t at = 0;
+	for (int i = 0; i < VR_GPU_RING; i++) {
+		for (int span = 0; span < VR_SPAN_COUNT; span++) {
+			vrr.gpu.slots[i].query[span][0] = ids[at++];
+			vrr.gpu.slots[i].query[span][1] = ids[at++];
+		}
+	}
+	vrr.gpu.ready = vrr.gpu.on = vrr.gpu.out.enabled = true;
+	vr_logf("gpu timing: on (%d-bit timestamps, read %d to %d frames late)", bits, 2, VR_GPU_RING - 1);
+}
+
+static void vr_gpu_free(void) {
+	if (!vrr.gpu.ready) {
+		return;
+	}
+	GLuint ids[VR_GPU_RING * VR_SPAN_COUNT * 2];
+	size_t at = 0;
+	for (int i = 0; i < VR_GPU_RING; i++) {
+		for (int span = 0; span < VR_SPAN_COUNT; span++) {
+			ids[at++] = vrr.gpu.slots[i].query[span][0];
+			ids[at++] = vrr.gpu.slots[i].query[span][1];
+		}
+	}
+	glDeleteQueries((GLsizei)at, ids);
+	memset(&vrr.gpu, 0, sizeof(vrr.gpu));
+}
+
+// Reads a finished slot into `out`. False, with nothing read, while the GPU has not finished it.
+static bool vr_gpu_read(const vr_gpu_slot_t *slot, vr_render_gpu_sample_t *out) {
+	int last = -1;
+	for (int span = 0; span < VR_SPAN_COUNT; span++) {
+		if (slot->used & (1u << span)) {
+			last = span; // spans are written in this order, so the last end finishes last
+		}
+	}
+	memset(out, 0, sizeof(*out));
+	out->stereo = slot->stereo;
+	if (last < 0) {
+		return true; // nothing was timed
+	}
+	GLuint available = 0;
+	glGetQueryObjectuiv(slot->query[last][1], GL_QUERY_RESULT_AVAILABLE, &available);
+	if (!available) {
+		return false;
+	}
+	for (int span = 0; span < VR_SPAN_COUNT; span++) {
+		if (!(slot->used & (1u << span))) {
+			continue;
+		}
+		GLuint64 begin = 0, end = 0;
+		glGetQueryObjectui64v(slot->query[span][0], GL_QUERY_RESULT, &begin);
+		glGetQueryObjectui64v(slot->query[span][1], GL_QUERY_RESULT, &end);
+		float ms = end >= begin ? (float)((double)(end - begin) * 1e-6) : 0.0f;
+		switch (span) {
+			case VR_SPAN_FACES: out->face_ms = ms; break;
+			case VR_SPAN_EYE0: out->eye_ms[0] = ms; break;
+			case VR_SPAN_EYE1: out->eye_ms[1] = ms; break;
+			case VR_SPAN_HUD: out->hud_ms = ms; break;
+			default: out->mono_ms = ms; break;
+		}
+		out->total_ms += ms;
+	}
+	return true;
+}
+
+// A replayed frame is about to write its timestamps: collect the slots that are two or three frames
+// old and finished, and take the slot this frame writes into. Nothing here waits.
+static void vr_gpu_frame_begin(bool stereo) {
+	vrr.gpu.cur = NULL;
+	if (!vrr.gpu.on) {
+		return;
+	}
+	uint32_t n = vrr.frames_replayed;
+	for (uint32_t age = 2; age < VR_GPU_RING; age++) {
+		vr_gpu_slot_t *slot = &vrr.gpu.slots[(n - age) % VR_GPU_RING];
+		vr_render_gpu_sample_t sample;
+		if (slot->pending && slot->frame == n - age && vr_gpu_read(slot, &sample)) {
+			slot->pending = false;
+			if (vrr.gpu.out.count < VR_GPU_SAMPLES_MAX) {
+				vrr.gpu.out.samples[vrr.gpu.out.count++] = sample;
+			}
+		}
+	}
+	vr_gpu_slot_t *slot = &vrr.gpu.slots[n % VR_GPU_RING];
+	if (slot->pending) {
+		vrr.gpu.out.dropped++; // still unfinished after VR_GPU_RING frames: its result is lost
+	}
+	slot->pending = true;
+	slot->used = 0;
+	slot->stereo = stereo;
+	slot->frame = n;
+	vrr.gpu.cur = slot;
+}
+
+#define VR_GPU_BEGIN(span) do { if (vrr.gpu.cur) { glQueryCounter(vrr.gpu.cur->query[span][0], GL_TIMESTAMP); } } while (0)
+#define VR_GPU_END(span) do { \
+		if (vrr.gpu.cur) { \
+			glQueryCounter(vrr.gpu.cur->query[span][1], GL_TIMESTAMP); \
+			vrr.gpu.cur->used |= 1u << (span); \
+		} \
+	} while (0)
+
+#else
+
+static void vr_gpu_init(void) {
+	if (vrr.cfg.settings.timing_gpu) {
+		vr_logf("gpu timing: off (not built for this GL header)");
+	}
+}
+static void vr_gpu_free(void) {}
+static void vr_gpu_frame_begin(bool stereo) { (void)stereo; }
+#define VR_GPU_BEGIN(span) do { } while (0)
+#define VR_GPU_END(span) do { } while (0)
+
+#endif
 
 const vr_render_frame_info_t *vr_render_frame_info(void) {
 	return &vrr.info;
@@ -331,6 +498,7 @@ void vr_render_detach(void) {
 		return;
 	}
 	vr_render_dump_flush();
+	vr_gpu_free();
 	vrr.attached = false;
 	vrr.recording = false;
 	vr_cmdlist_free(&vrr.list);
@@ -371,6 +539,7 @@ static bool vr_begin_frame(void) {
 	vrr.draw_calls = 0;
 	vrr.passes_this_frame = 0;
 	vrr.timing = (vr_render_timing_t){0};
+	vrr.gpu.out.count = 0;
 
 	if (vrr.views_ok) {
 		memcpy(vrr.views, vrr.frame->views, sizeof(vrr.views));
@@ -1093,7 +1262,9 @@ static void vr_pass(const vr_pass_t *p) {
 static void vr_replay_faces(void) {
 	vrr.face_passes_this_frame = 0;
 	vr_pass_t pass = { .kind = VR_PASS_FACE, .segments = 4 };
+	VR_GPU_BEGIN(VR_SPAN_FACES);
 	vr_pass(&pass);
+	VR_GPU_END(VR_SPAN_FACES);
 }
 
 static void vr_replay_eyes(vr_layers_t *layers) {
@@ -1110,7 +1281,9 @@ static void vr_replay_eyes(vr_layers_t *layers) {
 			.kind = VR_PASS_EYE, .eye = e, .image = t.image, .width = t.width, .height = t.height,
 			.depth = vrr.depth_rb[e], .clear = {0, 0, 0, 1}, .segments = 1
 		};
+		VR_GPU_BEGIN(VR_SPAN_EYE0 + e);
 		vr_pass(&pass);
+		VR_GPU_END(VR_SPAN_EYE0 + e);
 		if (vrr.dump_this_frame) {
 			vr_dump_queue(e, e == 0 ? "vr-eye0.bmp" : "vr-eye1.bmp", t.image, t.width, t.height, 3);
 		}
@@ -1135,6 +1308,7 @@ static void vr_replay_hud(vr_layers_t *layers) {
 	vr_ensure_hud_textures(t.width, t.height);
 
 	// The HUD over black, then over white
+	VR_GPU_BEGIN(VR_SPAN_HUD);
 	for (int i = 0; i < 2; i++) {
 		float v = i == 0 ? 0.0f : 1.0f;
 		vr_pass_t pass = {
@@ -1163,6 +1337,7 @@ static void vr_replay_hud(vr_layers_t *layers) {
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 	glActiveTexture(GL_TEXTURE0);
 	vrr.draw_calls++;
+	VR_GPU_END(VR_SPAN_HUD);
 
 	if (vrr.dump_this_frame) {
 		vr_dump_queue(2, "vr-hud.bmp", t.image, t.width, t.height, 4);
@@ -1189,7 +1364,9 @@ static void vr_replay_mono(vr_layers_t *layers) {
 		.kind = VR_PASS_MONO, .image = t.image, .width = t.width, .height = t.height,
 		.depth = vrr.depth_rb[2], .clear = {0, 0, 0, 1}, .segments = 3
 	};
+	VR_GPU_BEGIN(VR_SPAN_MONO);
 	vr_pass(&pass);
+	VR_GPU_END(VR_SPAN_MONO);
 	if (vrr.dump_this_frame) {
 		vr_dump_queue(3, "vr-panel.bmp", t.image, t.width, t.height, 3);
 	}
@@ -1224,9 +1401,11 @@ static void vr_end_frame(void) {
 
 	if (!vrr.gl_ready) {
 		vr_gl_make();
+		vr_gpu_init();
 	}
 	vr_gl_upload();
 	vrr.frames_replayed++;
+	vr_gpu_frame_begin(vrr.stereo);
 	vrr.dump_this_frame = vrr.dump_frame > 0 && vrr.frames_replayed == (uint32_t)vrr.dump_frame && vrr.dump_dir[0];
 	if (vrr.dump_this_frame) {
 		vr_mkdirs(vrr.dump_dir);
@@ -1242,6 +1421,9 @@ static void vr_end_frame(void) {
 	}
 	else {
 		vr_replay_mono(&layers);
+	}
+	if (vrr.gpu.cur) {
+		glFlush(); // hand the frame's work (and its timestamps) to the driver now; not a wait
 	}
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glBindVertexArray(0);
