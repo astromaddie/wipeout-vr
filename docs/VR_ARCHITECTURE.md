@@ -221,7 +221,7 @@ Levels: **worn** (the user played it in the headset), **device** (unattended run
 | Eye dumps at 0, 90 and 180° yaw | 2 | host + device | Host: `build/vr-harness/yaw-{000,090-right,180}/`, synthetic scene. Device (2026-10-02, `force_render` + `diag_attract_stereo`): the title on the mono panel, and stereo eyes of the real attract race at yaw 0 with correct disparity; 7538 tris, about 1 ms per eye, 72 fps with 0 to 1 missed frames per 10 s. Yaw 90 and 180 on the device are not dumped yet |
 | Cockpit H (hull cut, trim, parts, faces, bank modes, settings keys) | 3 | host | `src/vr/vr_cockpit*.{c,h}`. Unit tests, the harness on synthetic hulls, and the data-gated harness on the 8 real ships with two rendered against the approved mockup (98% overlap, mean difference 10 levels). On the Frame (2026-10-04): the cockpits of all 8 ships build at game start from the real data (8 of 8) and the title runs at 72 fps; no cockpit frame has been dumped there yet (the unattended run did not get past the intro and title in the time the lock allowed). Never worn |
 | Settings page (in the headset) | 3 | not started | Designed separately. The cockpit keys are registered and live so it can drive them |
-| First wear | 3 | not started | Ready: build and data are on the Frame |
+| First wear | 3 | **worn, accepted** | 2026-10-05, build `739a8d7` (cockpit H, world_scale 88). User verdict: "overall, I would say plays perfect". The verdict covers playing the game; which features were exercised (cockpit, bank modes, recentre, haptics) was not itemised, so those rows keep their own levels until a wear note names them |
 
 ## 9. Build, test and deploy
 
