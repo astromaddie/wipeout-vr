@@ -4,34 +4,38 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The display refresh-rate fallback (standard.md section 9). Pure: no runtime, no
-// clock but the one passed in, so it is unit-tested without OpenXR.
+// The display refresh rate (standard.md section 9). Pure: no runtime, no clock but
+// the one passed in, so it is unit-tested without OpenXR.
 //
-// The port asks for `wanted` Hz (120 by default). The runtime offers only some
-// rates, so the first request is the best offered rate at or below `wanted`. While
-// the headset is worn, the machine counts frames in 10 s windows of display time. Two
-// consecutive windows below 90% of the rate in effect fall back to the next lower
-// offered rate, never below 72 Hz (120 -> 90 -> 72). A window that was not worn
-// throughout does not count and breaks the run of consecutive ones.
+// On the Frame an app cannot change the refresh rate: SteamVR offers only the title's
+// per-app rate, so the app asks once, for the offered rate closest to `wanted` (120 by
+// default), and does not fall back (a ladder could not take effect). What it can do is
+// notice that the frame rate is not held and say which per-app rate to set.
 //
-// If the runtime offers a single rate there is nothing to fall back to: the machine
-// is inactive and the caller logs that once.
+// The rate in effect comes from the runtime's predictedDisplayPeriod, which is
+// trusted over the offered list. While the headset is worn, frames are counted in
+// 10 s windows of display time. Two consecutive windows below 90% of the display rate
+// produce one recommendation, once per session: the highest standard rate those windows
+// would have held (or the lowest, 72). It changes nothing.
+//
+// A window that was not worn throughout does not count and breaks the run of
+// consecutive ones; a stall of more than 5 s between frames (a load) restarts the count.
 
 #define VR_REFRESH_MAX_RATES 16
 #define VR_REFRESH_WINDOW_NS INT64_C(10000000000)
-#define VR_REFRESH_GAP_NS INT64_C(5000000000) // a longer pause between frames restarts the window
+#define VR_REFRESH_GAP_NS INT64_C(5000000000)
 #define VR_REFRESH_HELD_RATIO 0.9
-#define VR_REFRESH_MISSES 2 // consecutive windows below the ratio that trigger a fall back
-#define VR_REFRESH_FLOOR 72 // the lowest rate it falls back to
+#define VR_REFRESH_MISSES 2 // consecutive windows below the ratio that trigger the recommendation
 
 typedef struct {
 	int offered[VR_REFRESH_MAX_RATES]; // whole Hz, highest first
 	int offered_count;
 	int wanted;
-	int rate; // the rate believed to be in effect; 0 before the first offer
-	bool active; // frames are judged, and a fall back may happen
+	int requested; // the rate vr_refresh_offer() chose; 0 when none
+	int rate; // the display rate in effect, from the period; 0 until a frame says
+	bool reported; // the recommendation was made: nothing more is judged
 	int misses; // consecutive windows below the ratio
-	double prev_fps; // the first of those windows, for the log
+	double prev_fps; // the first of them, for the log
 	// the window being counted
 	bool window_open;
 	int64_t window_start_ns;
@@ -41,40 +45,38 @@ typedef struct {
 
 typedef enum {
 	VR_REFRESH_NONE, // nothing happened this frame
+	VR_REFRESH_RATE_CHANGED, // the display rate in effect is now `rate` (also the first time it is known)
 	VR_REFRESH_WINDOW_HELD, // a worn window ended at or above the ratio
 	VR_REFRESH_WINDOW_MISSED, // a worn window ended below it (misses < VR_REFRESH_MISSES)
-	VR_REFRESH_FALL_BACK // the second one: ask the runtime for `to`
+	VR_REFRESH_NOT_HELD // the second one: recommend `recommend` (once per session)
 } vr_refresh_event_t;
 
 typedef struct {
 	vr_refresh_event_t event;
-	int from, to; // FALL_BACK: the rates; others: from == the rate judged
-	double fps; // the window's frames per second (WINDOW_* and FALL_BACK)
-	double prev_fps; // FALL_BACK: the window before
+	int rate; // the display rate in effect
+	double fps; // the window's frames per second (WINDOW_* and NOT_HELD)
+	double prev_fps; // NOT_HELD: the window before
 	int misses;
+	int recommend; // NOT_HELD: the per-app rate to set; 0 when the display is already at the lowest (72)
 } vr_refresh_step_t;
 
-// wanted <= 0: never active (nothing is requested).
+// wanted <= 0: nothing is requested.
 void vr_refresh_init(vr_refresh_t *r, int wanted);
 
-// The runtime's offered rates (Hz, any order, junk skipped). Returns the rate to
-// request first: the highest offered at or below `wanted`, else the lowest offered
-// (above it); 0 when none are offered or nothing is wanted. Makes the machine
-// active when more than one rate is offered, and the rate in effect the chosen one.
+// The runtime's offered rates (Hz, any order, junk skipped). Returns the one rate to
+// request, once: the offered rate closest to `wanted`, the lower one on a tie; 0 when
+// none are offered or nothing is wanted.
 int vr_refresh_offer(vr_refresh_t *r, const float *rates, uint32_t count);
 
-// The runtime reports the rate in effect (XrEventDataDisplayRefreshRateChangedFB).
-// A different rate than believed adopts it and restarts the window.
-void vr_refresh_adopt(vr_refresh_t *r, int rate);
+// The display rate for a predictedDisplayPeriod, whole Hz; 0 for a bad period.
+int vr_refresh_rate_from_period(int64_t period_ns);
 
-// The runtime refused a request: stop trying.
-void vr_refresh_give_up(vr_refresh_t *r);
+// The per-app rate to recommend when `fps` is what the app managed: the highest of
+// 144, 120, 90, 72 that fps would hold (at 90% or better), else 72.
+int vr_refresh_recommend(double fps);
 
-// The next lower offered rate at or above the floor, 0 when there is none.
-int vr_refresh_next_lower(const vr_refresh_t *r);
-
-// One begun frame at its predicted display time. `worn`: the session is focused
-// and shouldRender is true, and force_render is off. Fills `out` (always).
-void vr_refresh_frame(vr_refresh_t *r, int64_t display_time_ns, bool worn, vr_refresh_step_t *out);
+// One begun frame at its predicted display time and period. `worn`: the session is
+// focused and shouldRender is true, and force_render is off. Fills `out` (always).
+void vr_refresh_frame(vr_refresh_t *r, int64_t display_time_ns, int64_t period_ns, bool worn, vr_refresh_step_t *out);
 
 #endif

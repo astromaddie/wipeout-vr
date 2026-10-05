@@ -338,8 +338,8 @@ void vr_frame_end(void) {
 		) {
 			if (!vr.display_logged) {
 				vr.display_logged = true;
-				vr_logf("display: rate %.0f Hz in effect (requested %d Hz, wanted %d Hz), eye %ux%u per eye (recommended %ux%u, eye_size %d x scale %.2f)",
-					vr.xr.display_refresh_rate, vr.xr.refresh_rate_chosen, (int)setting("refresh_rate"),
+				vr_logf("display: rate %d Hz in effect (requested %d Hz, wanted %d Hz), eye %ux%u per eye (recommended %ux%u, eye_size %d x scale %.2f)",
+					vr.xr.refresh.rate, vr.xr.refresh_rate_chosen, (int)setting("refresh_rate"),
 					vr.xr.eye[0].width, vr.xr.eye[0].height, vr.xr.eye_recommended[0][0], vr.xr.eye_recommended[0][1],
 					(int)setting("eye_size"), setting("resolution_scale"));
 			}

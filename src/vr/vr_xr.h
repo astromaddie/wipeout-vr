@@ -124,8 +124,8 @@ typedef struct vr_xr {
 
 	bool ext_frame_controller; // XR_VALVE_frame_controller_interaction is enabled
 	bool ext_refresh_rate; // XR_FB_display_refresh_rate is enabled
-	int refresh_rate_chosen; // Hz, 0 when none was requested (the first request; a fall back updates it)
-	vr_refresh_t refresh; // the offered rates and the fall-back state (vr_refresh.h)
+	int refresh_rate_chosen; // Hz asked for, once; 0 when none was requested
+	vr_refresh_t refresh; // the offered rates and the not-held check (vr_refresh.h)
 	float display_refresh_rate; // Hz in effect as the runtime reports it; 0 until known
 
 	// Session lifecycle. `state` is the last XrSessionState the runtime sent.
@@ -186,8 +186,9 @@ bool vr_xr_swapchain_release(vr_xr_t *xr, vr_swapchain_t *sc);
 
 // Drains the runtime's event queue and runs the session state machine:
 //   READY: xrBeginSession (PRIMARY_STEREO), then the refresh-rate request: the rates
-//   the runtime offers are logged and the best at or below config.refresh_rate asked for.
-//   display refresh rate changed: logged, and adopted as the rate in effect.
+//   the runtime offers are logged and the offered rate closest to config.refresh_rate
+//   asked for, once (the app cannot change the rate on the Frame; vr_refresh.h).
+//   display refresh rate changed: logged.
 //   STOPPING: xrEndSession.
 //   EXITING, LOSS_PENDING, instance loss: exit_requested.
 //   reference-space change pending: recentre_requests++.
@@ -200,9 +201,9 @@ void vr_xr_poll_events(vr_xr_t *xr);
 void vr_xr_request_exit(vr_xr_t *xr);
 
 // xrWaitFrame, xrBeginFrame and, when shouldRender, xrLocateViews at the
-// predicted display time. Each begun frame also feeds the refresh-rate fall back
+// predicted display time. Each begun frame also feeds the not-held check
 // (vr_refresh.h): it counts only while the session is focused and shouldRender is
-// set, never under config.force_render, and may request a lower offered rate. Returns false when no frame was begun: the session
+// set, never under config.force_render, and at most logs one recommendation. Returns false when no frame was begun: the session
 // is not running, or the runtime failed the wait or begin. When it returns
 // true, vr_xr_frame_end() must follow. Updates `frame` and `frame_dt`.
 bool vr_xr_frame_begin(vr_xr_t *xr);

@@ -422,17 +422,9 @@ void vr_xr_destroy(vr_xr_t *xr) {
 // -----------------------------------------------------------------------------
 // Session state machine
 
-// Asks the runtime for `rate` Hz. False (logged) when it refuses.
-static bool send_refresh_request(vr_xr_t *xr, int rate) {
-	if (!check(xr, xr->api.request_display_refresh_rate(xr->session, (float)rate), "xrRequestDisplayRefreshRateFB")) {
-		return false;
-	}
-	xr->refresh_rate_chosen = rate;
-	return true;
-}
-
-// At session start: log what the runtime offers (SteamVR offers only the rate set for the app
-// in its per-app settings), ask for the best one at or below config.refresh_rate, and arm the fall back.
+// At session start: log what the runtime offers (SteamVR offers only the title's per-app rate), and
+// ask once for the offered rate closest to config.refresh_rate. The app cannot change the rate on the
+// Frame, so there is no retry and no fall back; vr_refresh_frame() only recommends a per-app rate.
 static void request_refresh_rate(vr_xr_t *xr) {
 	if (!xr->ext_refresh_rate || xr->config.refresh_rate <= 0) {
 		return;
@@ -459,13 +451,13 @@ static void request_refresh_rate(vr_xr_t *xr) {
 	}
 	vr_logf("refresh rate: the runtime offers %s Hz", list);
 
-	if (!send_refresh_request(xr, chosen)) {
-		vr_refresh_give_up(&xr->refresh); // quietly stay where the runtime has us
-		return;
+	if (!check(xr, xr->api.request_display_refresh_rate(xr->session, (float)chosen), "xrRequestDisplayRefreshRateFB")) {
+		return; // once, quietly: the rate stays wherever the runtime has it
 	}
+	xr->refresh_rate_chosen = chosen;
 	vr_logf("refresh rate: asked for %d Hz, runtime offers %u rates, requested %d Hz", xr->config.refresh_rate, count, chosen);
-	if (xr->refresh.offered_count == 1) {
-		vr_logf("refresh rate: only %d Hz is offered, so there is no fall back (set the rate in SteamVR's per-app settings)", chosen);
+	if (xr->refresh.offered_count == 1 && chosen != xr->config.refresh_rate) {
+		vr_logf("refresh rate: only %d Hz is offered; the rate is set per app in SteamVR's settings", chosen);
 	}
 	if (xr->api.get_display_refresh_rate) {
 		float now = 0;
@@ -476,18 +468,25 @@ static void request_refresh_rate(vr_xr_t *xr) {
 	}
 }
 
-static void on_refresh_step(vr_xr_t *xr, const vr_refresh_step_t *step) {
+static void on_refresh_step(const vr_refresh_step_t *step) {
 	switch (step->event) {
+		case VR_REFRESH_RATE_CHANGED:
+			vr_logf("display rate is %d Hz (from predictedDisplayPeriod)", step->rate);
+			break;
 		case VR_REFRESH_WINDOW_MISSED:
 			vr_logf("refresh rate: %.1f fps in the last 10 s, below 90%% of %d Hz (%d of %d windows)",
-				step->fps, step->from, step->misses, VR_REFRESH_MISSES);
+				step->fps, step->rate, step->misses, VR_REFRESH_MISSES);
 			break;
-		case VR_REFRESH_FALL_BACK:
-			vr_logf("refresh rate: %d Hz not held (%.1f and %.1f fps in two 10 s windows, below 90%%): falling back to %d Hz",
-				step->from, step->prev_fps, step->fps, step->to);
-			if (!send_refresh_request(xr, step->to)) {
-				vr_logf("refresh rate: the fall back was refused; staying as it is");
-				vr_refresh_give_up(&xr->refresh);
+		case VR_REFRESH_NOT_HELD:
+			if (step->recommend > 0) {
+				vr_logf("refresh rate: %d Hz is not held (%.1f and %.1f fps in two 10 s windows, below 90%%). "
+					"The app cannot change it: set this title to %d Hz in SteamVR's per-app settings",
+					step->rate, step->prev_fps, step->fps, step->recommend);
+			}
+			else {
+				vr_logf("refresh rate: %d Hz is not held (%.1f and %.1f fps in two 10 s windows, below 90%%), "
+					"and it is the lowest rate: the frame cost needs cutting (try a lower eye_size)",
+					step->rate, step->prev_fps, step->fps);
 			}
 			break;
 		default:
@@ -561,7 +560,6 @@ void vr_xr_poll_events(vr_xr_t *xr) {
 				const XrEventDataDisplayRefreshRateChangedFB *e = (const XrEventDataDisplayRefreshRateChangedFB *)&ev;
 				xr->display_refresh_rate = e->toDisplayRefreshRate;
 				vr_logf("display refresh rate changed: %.0f -> %.0f Hz", e->fromDisplayRefreshRate, e->toDisplayRefreshRate);
-				vr_refresh_adopt(&xr->refresh, (int)(e->toDisplayRefreshRate + 0.5f));
 				break;
 			}
 
@@ -678,11 +676,11 @@ bool vr_xr_frame_begin(vr_xr_t *xr) {
 	xr->frame_open = true;
 	xr->frames_begun++;
 
-	// The fall back counts frames only while worn: focused, rendering, and not a diagnostic run
+	// The not-held check counts frames only while worn: focused, rendering, and not a diagnostic run
 	vr_refresh_step_t step;
 	bool worn = xr->focused && xr->frame.should_render && !xr->config.force_render;
-	vr_refresh_frame(&xr->refresh, fs.predictedDisplayTime, worn, &step);
-	on_refresh_step(xr, &step);
+	vr_refresh_frame(&xr->refresh, fs.predictedDisplayTime, fs.predictedDisplayPeriod, worn, &step);
+	on_refresh_step(&step);
 	return true;
 }
 
