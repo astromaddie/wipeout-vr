@@ -1,0 +1,2 @@
+# Preserve the exact archived upstream README, including its original whitespace.
+docs/README_PRE_PR0.md -text -eol whitespace=-blank-at-eol
