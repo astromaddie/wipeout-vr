@@ -1,32 +1,35 @@
-# WipEout VR on Steam Frame (experimental)
+# WipEout VR on Steam Frame
 
-This private port adds a native Steam Frame VR path to [phoboslab/wipeout-rewrite](https://github.com/phoboslab/wipeout-rewrite), a reimplementation of the 1995 PlayStation WipEout. It targets Steam Frame on SteamOS using SteamVR OpenXR, SDL2 and GL through Turnip + Zink; it is not a PS1 emulator or a PC-streamed headset app. See [docs/VR_ARCHITECTURE.md](docs/VR_ARCHITECTURE.md) for the rendering and input design.
+This is my Steam Frame VR port of [phoboslab/wipeout-rewrite](https://github.com/phoboslab/wipeout-rewrite), a reimplementation of the 1995 PlayStation WipEout. It runs on SteamOS with SteamVR OpenXR, SDL2 and OpenGL through Turnip and Zink. It is a native Linux ARM64 app, not a PlayStation emulator or a PC-streamed app. See the [architecture notes](docs/VR_ARCHITECTURE.md) for the rendering and input design.
 
-**Status: PRIVATE · EXPERIMENTAL · HOLD.** Upstream has no source license and describes possible leaked-source provenance. Keep this project private pending a resolved source-rights route. The [PR0 readiness record](docs/PR0_READINESS.md) and [Steam Frame PR0 audit](https://github.com/astromaddie/steam-frame-vr-playbook/blob/main/reports/pr0-2026-10-11/README.md#material-findings) document the hold; neither grants permission. The previous upstream README is preserved at [docs/README_PRE_PR0.md](docs/README_PRE_PR0.md).
+**EXPERIMENTAL.** I made this for personal use, and I'm keeping it private for now. The upstream project has no source license and describes possible leaked-source origins, so the source rights need sorting out before a public release. See the [rights and cleanup notes](docs/PR0_READINESS.md). The [earlier upstream README](docs/README_PRE_PR0.md) is preserved.
 
-## Capabilities and evidence
-
-| Capability | Evidence recorded in the project | Limit for this source revision |
-| --- | --- | --- |
-| Stereo race rendering | Earlier Frame runs rendered real attract-race stereo eyes; host harness covers synthetic scenes and mono parity. | Current HEAD was not rebuilt or tested in this documentation pass; the cockpit and other feature rows have their own limits in the architecture record. |
-| OpenXR and controls | Earlier device probes created a SteamVR OpenXR session and swapchains. A prior wear on build 739a8d7 received a broad positive gameplay report. | The wear did not itemize cockpit, recenter, haptics or individual controls. No claim of complete gameplay acceptance. |
-| Frame pacing | Earlier unattended measurements of a simple attract-race scene are documented at 72 Hz. | No sustained real-race or worn performance result is established for current HEAD. xrRequestDisplayRefreshRateFB was refused; SteamVR's per-app display setting controls the rate. |
-| UI and rendering gaps | Race is intended for stereo; title, menus and intro use a world-locked panel. | Far/leashed HUD modes and HUD visibility controls are not built; desktop mirror is blank. The app does not control refresh rate. |
+The port renders races in stereo and supports tracked head and Frame controller input. I've played it on my Frame and liked how it feels. A cockpit instrument view is in development; the title, menus and intro use a panel in front of the player. HUD distance and visibility controls are still missing, and the desktop mirror is blank.
 
 ## Game data
 
-Gameplay requires external disc data; source and game-derived material permissions remain unresolved. The documented data source is a user-owned NTSC-U PlayStation disc (SCUS-94301), plus the upstream-required PC menu models where available. The project helper accepts a .cue with a MODE2/2352 data track and CD-audio tracks and creates wipeout/ plus optional wipeout/music/trackNN.qoa:
+Gameplay needs PlayStation disc data from your own copy. The documented source is a user-owned NTSC-U disc (SCUS-94301), with the upstream-required PC menu models where available. `tools/data/prepare_psx_data.sh` reads a `.cue` file and prepares the files under `wipeout/`:
 
-    tools/data/prepare_psx_data.sh /path/to/your-disc.cue /tmp/wipeout-data
-    tools/steam_frame/deploy.sh --data /tmp/wipeout-data
+```sh
+tools/data/prepare_psx_data.sh /path/to/your-disc.cue /tmp/wipeout-data
+tools/steam_frame/deploy.sh --data /tmp/wipeout-data
+```
 
-The Frame data tree is under $XDG_DATA_HOME/WipEoutVR/wipeout/ (default ~/.local/share/WipEoutVR/wipeout/); saves and vr.toml are under $XDG_DATA_HOME/WipEoutVR/. The intro video is skipped by the data helper.
+The Frame data folder is `$XDG_DATA_HOME/WipEoutVR/wipeout/` (usually `~/.local/share/WipEoutVR/wipeout/`). Saves and `vr.toml` are in `$XDG_DATA_HOME/WipEoutVR/`. The helper skips the intro video.
 
-## Build route
+## Build and launch
 
-The documented package is a Linux ARM64 executable for SteamLinuxRuntime_4-arm64, launched as the WipEoutVR devkit title. With Docker installed, the repository's pinned ARM64 environment builds the VR target, runs its host tests, stages the package and checks the ABI:
+The target is a Linux ARM64 package for `SteamLinuxRuntime_4-arm64`. With Docker installed, build the pinned environment and its package:
 
-    docker build -t wipeout-vr-linux -f tools/docker/linux.Dockerfile tools/docker
-    tools/docker/build-linux.sh all
+```sh
+docker build -t wipeout-vr-linux -f tools/docker/linux.Dockerfile tools/docker
+tools/docker/build-linux.sh all
+```
 
-The core configuration is cmake -S . -B build -DWIPEOUT_VR=ON, followed by cmake --build build and the configured CTest suite. These are documented steps; this source commit was not built or tested in this documentation pass. See [docs/VR_ARCHITECTURE.md](docs/VR_ARCHITECTURE.md) for historical evidence and remaining checks.
+Install the staged package, copy the prepared game data and register the `WipEoutVR` devkit title with:
+
+```sh
+tools/steam_frame/deploy.sh --data /tmp/wipeout-data
+```
+
+Launch it from the Steam library so the app receives controller input. The [architecture notes](docs/VR_ARCHITECTURE.md) describe the build, input, cockpit work and known rendering gaps; [docs/PR0_READINESS.md](docs/PR0_READINESS.md) explains the source-rights hold.

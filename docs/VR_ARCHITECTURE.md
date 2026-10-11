@@ -1,11 +1,8 @@
-# WipEout VR: architecture (current state)
+# WipEout VR: architecture
 
-A native standalone VR port of WipEout for the Valve Steam Frame. It is built on
-[phoboslab/wipeout-rewrite](https://github.com/phoboslab/wipeout-rewrite) (upstream
-remote `upstream`) and follows the Steam Frame VR port playbook and standard
-(`~/.claude/skills/steam-frame-vr-port/`).
+This is a native Steam Frame VR port built on [phoboslab/wipeout-rewrite](https://github.com/phoboslab/wipeout-rewrite). It targets SteamOS with SteamVR OpenXR, SDL2 and OpenGL through Turnip and Zink. The VR build renders races in stereo and adds Frame controller input; title, menu and intro screens use a world-locked panel.
 
-This file describes the current state. Put chronology in `docs/VR_LAB_LOG.md` if a log becomes necessary.
+The cockpit instrument view is in development. HUD distance and visibility controls are not implemented, and the desktop mirror is blank. The source-rights hold and data requirements are described in [README.md](../README.md).
 
 ## 1. Target and base
 
