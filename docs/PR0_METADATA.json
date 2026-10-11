@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "milestone": "PR0",
+  "status": "EXPERIMENTAL",
+  "publication_status": "private preparation; no release published",
+  "audited_commit": "ecaff58adff6dda659c88b7ae089ff61599e6052",
+  "current_checkout_commit": "ecaff58adff6dda659c88b7ae089ff61599e6052",
+  "branch": "main",
+  "tested_commit": null,
+  "supported_targets": [
+    "Steam Frame / SteamOS / Linux ARM64 / SteamVR OpenXR / SDL2 / X11 / Turnip + Zink"
+  ],
+  "validation": {
+    "source_commit": null,
+    "result": "No fresh build or tests were run for the audited source."
+  },
+  "full_application_build": "not run for current audited source",
+  "distribution_blockers": [
+    "upstream states it has no license and describes possible leaked-source provenance. A fork-level README or port license does not resolve that source-rights gap. Keep private pending a documented rights route."
+  ],
+  "data_boundary": "Retail disc data and optional PC menu models are external user inputs; extracted output must not be committed.",
+  "changelog": "CHANGELOG.md",
+  "audit_date": "2026-10-11",
+  "audit_details": "docs/PR0_READINESS.md"
+}
