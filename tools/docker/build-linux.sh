@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds and tests WipEout for Linux inside the pinned environment from linux.Dockerfile. The
-# target architecture is the Docker host's: arm64 on Apple Silicon, which is the Steam Frame's.
+# Builds and tests WipEout for Linux inside the pinned environment from linux.Dockerfile. Set
+# DOCKER_PLATFORM=linux/arm64 to target the Steam Frame from an x86-64 Docker host with ARM64
+# emulation enabled.
 #
 #   docker build -t wipeout-vr-linux -f tools/docker/linux.Dockerfile tools/docker
 #   tools/docker/build-linux.sh [step]
@@ -17,12 +18,25 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
+docker_platform="${DOCKER_PLATFORM:-}"
 arch="$(docker info --format '{{.Architecture}}')"
+if [[ "$docker_platform" == linux/arm64 ]]; then arch=aarch64; fi
 image="${WIPEOUT_VR_IMAGE:-wipeout-vr-linux}"
 step="${1:-all}"
 
+build_image() {
+	if [[ -n "$docker_platform" ]]; then
+		docker buildx build --platform "$docker_platform" --load -t "$image" \
+			-f "$repo/tools/docker/linux.Dockerfile" "$repo/tools/docker"
+	else
+		docker build -t "$image" -f "$repo/tools/docker/linux.Dockerfile" "$repo/tools/docker"
+	fi
+}
+
 in_container() {
-	docker run --rm -v "$repo":/src -w /src "$image" bash -c "set -euo pipefail; $1"
+	local platform_args=()
+	[[ -z "$docker_platform" ]] || platform_args+=(--platform "$docker_platform")
+	docker run ${platform_args[@]+"${platform_args[@]}"} --rm -v "$repo":/src -w /src "$image" bash -c "set -euo pipefail; $1"
 }
 
 step_off() {
@@ -55,6 +69,7 @@ step_verify() {
 }
 
 case "$step" in
+	image) build_image ;;
 	off) step_off ;;
 	on) step_on ;;
 	package) step_package ;;

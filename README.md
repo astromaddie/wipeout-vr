@@ -19,19 +19,6 @@ The Frame data folder is `$XDG_DATA_HOME/WipEoutVR/wipeout/` (usually `~/.local/
 
 ## Build and launch
 
-The target is a Linux ARM64 package for `SteamLinuxRuntime_4-arm64`. With Docker installed, build the pinned environment and its package:
-
-```sh
-docker build -t wipeout-vr-linux -f tools/docker/linux.Dockerfile tools/docker
-tools/docker/build-linux.sh all
-```
-
-Install the staged package, copy the prepared game data and register the `WipEoutVR` devkit title with:
-
-```sh
-tools/steam_frame/deploy.sh --data /tmp/wipeout-data
-```
-
-Launch it from the Steam library so the app receives controller input. The [architecture notes](docs/VR_ARCHITECTURE.md) describe the build, input, cockpit work and known rendering gaps; [docs/PR0_READINESS.md](docs/PR0_READINESS.md) records the experimental source scope and verification status.
+The [Steam Frame build and install guide](docs/STEAM-FRAME-BUILD-INSTALL.md) covers ARM64 Docker builds from Linux, macOS, or Windows through WSL2, data preparation, package output, first installation and Steam launch. The Frame package is Linux ARM64; a Windows or desktop VR build is a separate target. The [architecture notes](docs/VR_ARCHITECTURE.md) describe the build, input, cockpit work and known rendering gaps; [docs/PR0_READINESS.md](docs/PR0_READINESS.md) records the experimental source scope and verification status.
 
 The upstream source is published without a license and its README discusses its origins. This fork keeps those notices; it adds no new grant for the original source or game data.
