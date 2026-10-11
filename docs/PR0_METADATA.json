@@ -2,7 +2,7 @@
   "schema_version": 1,
   "milestone": "PR0",
   "status": "EXPERIMENTAL",
-  "publication_status": "prepared for public experimental source; no binary release included",
+  "publication_status": "public experimental source; no binary release",
   "audited_commit": "ecaff58adff6dda659c88b7ae089ff61599e6052",
   "current_checkout_commit": "09f140da5d0be0a5b8d9e7f19f04744ca649815a",
   "branch": "main",
@@ -24,5 +24,6 @@
   "changelog": "CHANGELOG.md",
   "audit_date": "2026-10-11",
   "audit_details": "docs/PR0_READINESS.md",
-  "distribution_blockers": []
+  "distribution_blockers": [],
+  "publication_date": "2026-10-11"
 }

@@ -1,6 +1,6 @@
 # PR0 — wipeout-vr
 
-**EXPERIMENTAL.** Prepared as personal source for public release. See the [README](../README.md) for features, controls, game-data requirements and build instructions.
+**EXPERIMENTAL.** Published as personal experimental source. See the [README](../README.md) for features, controls, game-data requirements and build instructions.
 
 | Record | Revision |
 | --- | --- |
