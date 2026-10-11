@@ -2,24 +2,27 @@
   "schema_version": 1,
   "milestone": "PR0",
   "status": "EXPERIMENTAL",
-  "publication_status": "private preparation; no release published",
+  "publication_status": "prepared for public experimental source; no binary release included",
   "audited_commit": "ecaff58adff6dda659c88b7ae089ff61599e6052",
-  "current_checkout_commit": "ecaff58adff6dda659c88b7ae089ff61599e6052",
+  "current_checkout_commit": "09f140da5d0be0a5b8d9e7f19f04744ca649815a",
   "branch": "main",
-  "tested_commit": null,
+  "tested_commit": "09f140da5d0be0a5b8d9e7f19f04744ca649815a",
   "supported_targets": [
     "Steam Frame / SteamOS / Linux ARM64 / SteamVR OpenXR / SDL2 / X11 / Turnip + Zink"
   ],
   "validation": {
-    "source_commit": null,
-    "result": "No fresh build or tests were run for the audited source."
+    "source_commit": "09f140da5d0be0a5b8d9e7f19f04744ca649815a",
+    "host_build_command": "cmake --build build/mac-vr --parallel 4 --target test_vr_xr test_vr_settings test_vr_math test_vr_clock test_vr_paths test_vr_stage test_vr_compose test_vr_refresh test_vr_view test_vr_cockpit test_vr_input test_vr_input_xr third_party/sfvr/test_view third_party/sfvr/test_turn third_party/sfvr/test_haptics third_party/sfvr/test_room third_party/sfvr/test_perf third_party/sfvr/test_settings third_party/sfvr/test_cxx",
+    "host_test_command": "ctest --test-dir build/mac-vr --output-on-failure",
+    "host_test_result": "PASS: 20/20 ROM-free host tests",
+    "evidence_logs": "/tmp/pr0-final/wipeout-publication-tests",
+    "result": "Host tests only; no full application build or new device test was run."
   },
-  "full_application_build": "not run for current audited source",
-  "distribution_blockers": [
-    "upstream states it has no license and describes possible leaked-source provenance. A fork-level README or port license does not resolve that source-rights gap. Keep private pending a documented rights route."
-  ],
+  "full_application_build": "not run",
+  "source_scope_note": "The preserved upstream README says the source has no license and may derive from leaked PC source. This experimental source preparation does not add a license grant or establish provenance.",
   "data_boundary": "Retail disc data and optional PC menu models are external user inputs; extracted output must not be committed.",
   "changelog": "CHANGELOG.md",
   "audit_date": "2026-10-11",
-  "audit_details": "docs/PR0_READINESS.md"
+  "audit_details": "docs/PR0_READINESS.md",
+  "distribution_blockers": []
 }

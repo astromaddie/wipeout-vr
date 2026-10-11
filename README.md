@@ -2,7 +2,7 @@
 
 This is my Steam Frame VR port of [phoboslab/wipeout-rewrite](https://github.com/phoboslab/wipeout-rewrite), a reimplementation of the 1995 PlayStation WipEout. It runs on SteamOS with SteamVR OpenXR, SDL2 and OpenGL through Turnip and Zink. It is a native Linux ARM64 app, not a PlayStation emulator or a PC-streamed app. See the [architecture notes](docs/VR_ARCHITECTURE.md) for the rendering and input design.
 
-**EXPERIMENTAL.** I made this for personal use, and I'm keeping it private for now. The upstream project has no source license and describes possible leaked-source origins, so the source rights need sorting out before a public release. See the [rights and cleanup notes](docs/PR0_READINESS.md). The [earlier upstream README](docs/README_PRE_PR0.md) is preserved.
+**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You'll need your own WipEout disc data; it isn't included here. The [original README](docs/README_PRE_PR0.md) and upstream notices are preserved.
 
 The port renders races in stereo and supports tracked head and Frame controller input. I've played it on my Frame and liked how it feels. A cockpit instrument view is in development; the title, menus and intro use a panel in front of the player. HUD distance and visibility controls are still missing, and the desktop mirror is blank.
 
@@ -32,4 +32,6 @@ Install the staged package, copy the prepared game data and register the `WipEou
 tools/steam_frame/deploy.sh --data /tmp/wipeout-data
 ```
 
-Launch it from the Steam library so the app receives controller input. The [architecture notes](docs/VR_ARCHITECTURE.md) describe the build, input, cockpit work and known rendering gaps; [docs/PR0_READINESS.md](docs/PR0_READINESS.md) explains the source-rights hold.
+Launch it from the Steam library so the app receives controller input. The [architecture notes](docs/VR_ARCHITECTURE.md) describe the build, input, cockpit work and known rendering gaps; [docs/PR0_READINESS.md](docs/PR0_READINESS.md) records the experimental source scope and verification status.
+
+The upstream source is published without a license and its README discusses its origins. This fork keeps those notices; it adds no new grant for the original source or game data.

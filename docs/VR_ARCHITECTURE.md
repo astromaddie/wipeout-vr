@@ -14,7 +14,7 @@ The cockpit instrument view is in development. HUD distance and visibility contr
 | GL profile | Core 4.3 context (SDL requests it, forward-compatible), with GLSL 330 variants of the shaders in `src/vr/vr_shaders_gl330.h`. See section 9 |
 | Base | wipeout-rewrite: C11, SDL2 + OpenGL 2.x/GLES2 renderer (`src/render_gl.c`), about 11k lines |
 | Rejected base | `alexbeavs-ps1-ports/wipeout-recomp` (psxrecomp). It emulates the PS1 GPU, which sees only 2D screen-space triangles, and the game culls to its native frustum. Stereo would need PGXP depth reconstruction plus MIPS reverse engineering. Decided with the user on 2026-10-02 |
-| Legal | Personal, experimental use. Upstream has no license and may derive from the 2022 leaked PC source; the user does not mind (2026-10-02). The repo is private. Never commit game data |
+| Source scope | Personal experimental source port. The preserved upstream README says its source has no license and may derive from PC source leaked in 2022. This fork adds no grant and establishes no provenance. Never commit game data |
 | Game data | User-supplied PSX NTSC data plus the PC menu models, laid out as upstream's README describes, under `$XDG_DATA_HOME/WipEoutVR/wipeout/` (default `~/.local/share`). Saves and `vr.toml` go in `$XDG_DATA_HOME/WipEoutVR/`. The VR build resolves both at runtime and ignores `PATH_ASSETS` and `PATH_USERDATA` |
 
 ## 2. Triage facts (from the upstream source, 2026-10-02)
