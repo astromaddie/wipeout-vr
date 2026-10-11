@@ -37,11 +37,13 @@ On an ARM64 Linux Docker host, omit the `DOCKER_PLATFORM` export. The package is
 
 ## Prepare game data
 
-Run the data preparer on the build host with Python 3.8 or newer, `7zz`, and a C compiler available. Give it your own supported NTSC-U WipEout `.cue` file and a new output directory:
+Run the data preparer with Python 3.8 or newer and `7zz`, using your own supported NTSC-U WipEout `.cue` file and a new output directory. The Linux ARM64 package includes a native `cd2qoa` helper, so Frame Desktop users do not need a C compiler. A source checkout without that helper can still compile `tools/data/cd2qoa.c` as a fallback when a C compiler is available.
 
 ```sh
 tools/data/prepare_psx_data.sh "$HOME/game-data/wipeout.cue" "$HOME/game-data/wipeout-data"
 ```
+
+When preparing data on a different architecture, set `WIPEOUT_CD2QOA` to a native helper for that host. The packaged ARM64 helper is at `tools/data/cd2qoa`.
 
 The output is `wipeout-data/wipeout/` with the disc's lowercased `WIPEOUT/` files and converted `wipeout/music/trackNN.qoa` audio files. The preparer skips the intro video. There is no repository-pinned hash for this user-generated output; keep it outside the source tree and package.
 

@@ -6,7 +6,8 @@
 #
 # OUT_DIR gets wipeout/ (the disc's WIPEOUT/ tree, lowercased) and
 # wipeout/music/trackNN.qoa (the audio tracks in order). Deploy it with
-# tools/steam_frame/deploy.sh --data OUT_DIR. Needs python3, 7zz and a C compiler.
+# tools/steam_frame/deploy.sh --data OUT_DIR. Needs python3 and 7zz.
+# If no prebuilt helper is available, the script falls back to compiling cd2qoa.c.
 # The intro video (an STR file) is not converted; the game skips it.
 set -euo pipefail
 
@@ -37,9 +38,18 @@ mkdir -p "$out"
 done
 
 # CD audio (s16le stereo 44.1 kHz) to QOA, skipping each track's 2 s pregap
-cc -O2 -I "$root/src/libs" "$root/tools/data/cd2qoa.c" -o "$work/cd2qoa"
+cd2qoa="${WIPEOUT_CD2QOA:-$root/tools/data/cd2qoa}"
+if [[ ! -x "$cd2qoa" ]]; then
+	if [[ -n "${WIPEOUT_CD2QOA:-}" ]]; then
+		echo "WIPEOUT_CD2QOA is not executable: $WIPEOUT_CD2QOA" >&2
+		exit 1
+	fi
+	command -v cc >/dev/null || { echo "need a prebuilt cd2qoa helper or a C compiler (set WIPEOUT_CD2QOA)" >&2; exit 1; }
+	cc -O2 -I "$root/src/libs" "$root/tools/data/cd2qoa.c" -o "$work/cd2qoa"
+	cd2qoa="$work/cd2qoa"
+fi
 mkdir -p "$out/wipeout/music"
 for ((i = 1; i < ${#tracks[@]}; i++)); do
-	"$work/cd2qoa" "${tracks[$i]}" $((150 * 2352)) "$out/wipeout/music/$(printf 'track%02d.qoa' "$i")"
+	"$cd2qoa" "${tracks[$i]}" $((150 * 2352)) "$out/wipeout/music/$(printf 'track%02d.qoa' "$i")"
 done
 echo "wrote $out/wipeout ($(du -sh "$out/wipeout" | cut -f1)), $(( ${#tracks[@]} - 1 )) music tracks"
