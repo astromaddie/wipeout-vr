@@ -4,6 +4,8 @@ This is my Steam Frame VR port of [phoboslab/wipeout-rewrite](https://github.com
 
 **EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You'll need your own WipEout disc data; it isn't included here. The [original README](docs/README_PRE_PR0.md) and upstream notices are preserved.
 
+**Want to play on Steam Frame?** Download the prebuilt standalone package from the [v0.1.0 prerelease](https://github.com/astromaddie/wipeout-vr/releases/tag/v0.1.0); no compiler is needed. You still need disc data from your own WipEout copy and must prepare it with the included data tool.
+
 The port renders races in stereo and supports tracked head and Frame controller input. I've played it on my Frame and liked how it feels. A cockpit instrument view is in development; the title, menus and intro use a panel in front of the player. HUD distance and visibility controls are still missing, and the desktop mirror is blank.
 
 ## Game data
